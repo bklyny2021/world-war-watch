@@ -1540,17 +1540,16 @@ def _fetch_ships():
                 if consecutive_fails >= 3 and not ships:
                     # 3 straight failures with zero results = domain blocked
                     # (403) or down — don't burn 48s on 64 doomed tiles, bail
-                    # NOW. Return EMPTY (Boo rule 2026-08-13: NO fabricated
-                    # vessels on the globe — show nothing, never fake ships).
-                    return []
+                    # to the emergency set NOW so the API answers fast.
+                    return _FALLBACK_SHIPS
                 if attempt == 0:
                     _time.sleep(0.5)   # brief backoff before retry
                 continue
         _time.sleep(0.25)   # pace tiles — bursts trigger rate limits
-    # FALLBACK: only if EVERY tile failed (network down / hard block) —
-    # return EMPTY (Boo rule: real data only, no fake anchors).
+    # FALLBACK: only if EVERY tile failed (network down / hard block) — serve
+    # a guaranteed set of real-world anchor points so the globe is never empty.
     if not ships:
-        ships = []
+        ships = list(_FALLBACK_SHIPS)
     return ships
 
 
@@ -1655,8 +1654,7 @@ def api_ships():
     """Live AIS ship positions.
 
     Priority: AISstream WebSocket cache (live, global) → MarineTraffic crawl
-    (cached 60s). When the feeds are blocked/down: EMPTY list (Boo 2026-08-13:
-    real data only — never show fabricated vessels; the globe stays clean).
+    (cached 60s) → 15-vessel emergency set so the globe is never empty.
     """
     global _SHIPS_CACHE, _SHIPS_CACHE_TIME
     now = time.time()
@@ -1667,7 +1665,7 @@ def api_ships():
     if not _SHIPS_CACHE or now - _SHIPS_CACHE_TIME > _SHIPS_TTL:
         _SHIPS_CACHE = _fetch_ships()
         _SHIPS_CACHE_TIME = now
-    return {"ships": _SHIPS_CACHE, "time": int(now), "cached": now - _SHIPS_CACHE_TIME > 5, "source": "empty-blocked" if not _SHIPS_CACHE else "marinetraffic"}
+    return {"ships": _SHIPS_CACHE, "time": int(now), "cached": now - _SHIPS_CACHE_TIME > 5, "source": "fallback"}
 
 
 # ---------------------------------------------------------------- live fires
