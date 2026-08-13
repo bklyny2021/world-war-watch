@@ -1,0 +1,4234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WorldView v1.0 — Live 3D Flight Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/cesium@1.119.0/Build/Cesium/Widgets/widgets.css" />
+<script src="https://unpkg.com/cesium@1.119.0/Build/Cesium/Cesium.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --panel: rgba(13, 18, 28, 0.92);
+    --border: #1f2a3a;
+    --text: #d7e1ec;
+    --dim: #7c8ba0;
+    --accent: #00e5a0;
+    --accent2: #38bdf8;
+    --warn: #ffcc00;
+    --red: #ff4444;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); font-family: "Cascadia Code", "Consolas", monospace; font-size: 13px; color: var(--text); }
+  #cesiumContainer { position: absolute; inset: 0; }
+  .cesium-viewer-bottom { display: none; }
+  .cesium-viewer-toolbar { display: none; }
+
+  /* ---------- top bar ---------- */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px;
+    background: linear-gradient(180deg, rgba(8,12,18,0.95), rgba(8,12,18,0.75));
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(6px);
+  }
+  #logo { font-size: 17px; font-weight: 700; letter-spacing: 2px; color: var(--accent); white-space: nowrap; }
+  #logo span { color: var(--accent2); }
+  #verTag {
+    font-size: 9px; font-weight: 400; letter-spacing: 1px; color: var(--dim);
+    border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; margin-left: 8px;
+    vertical-align: 2px;
+  }
+  #liveBadge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(0,229,160,0.12); border: 1px solid var(--accent);
+    color: var(--accent); padding: 3px 10px; border-radius: 12px;
+    font-size: 11px; font-weight: 700; letter-spacing: 1px; white-space: nowrap;
+  }
+  #liveBadge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  #stats { font-size: 11px; color: var(--dim); white-space: nowrap; }
+  #stats b { color: var(--text); }
+  #searchBox {
+    flex: 1; max-width: 380px;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    color: var(--text); padding: 7px 12px; border-radius: 6px; font-family: inherit; font-size: 12px;
+    outline: none;
+  }
+  #searchBox:focus { border-color: var(--accent2); }
+  #filterRow { display: flex; gap: 8px; align-items: center; }
+  #airlineFilter {
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 8px; border-radius: 6px; font-family: inherit; font-size: 12px; outline: none; max-width: 200px;
+  }
+  #btnReset {
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--dim);
+    padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  #btnReset:hover { color: var(--text); border-color: var(--accent2); }
+
+  /* ---------- status ---------- */
+  #status {
+    position: fixed; bottom: 14px; left: 16px; z-index: 100;
+    font-size: 11px; color: var(--dim); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+    max-width: 440px; line-height: 1.5;
+  }
+  #status b { color: var(--text); }
+  #status .ok { color: var(--accent); }
+  #status .err { color: var(--red); }
+
+  /* ---------- sidebar ---------- */
+  #sidebar {
+    position: fixed; top: 0; right: -420px; bottom: 0; width: 400px; z-index: 200;
+    background: var(--panel); border-left: 1px solid var(--border);
+    transition: right 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex; flex-direction: column;
+    backdrop-filter: blur(8px);
+  }
+  #sidebar.open { right: 0; }
+  #sideHeader {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 18px 10px; border-bottom: 1px solid var(--border);
+  }
+  #sideTitle { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+  #sideCallsign { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  #btnClose { background: none; border: none; color: var(--dim); font-size: 20px; cursor: pointer; padding: 4px 8px; }
+  #btnClose:hover { color: var(--red); }
+  #sideBody { flex: 1; overflow-y: auto; padding: 14px 18px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(31,42,58,0.5); }
+  .row .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; white-space: nowrap; }
+  .row .value { color: var(--text); font-weight: 600; text-align: right; word-break: break-word; }
+  .row .value .sub { display: block; font-weight: 400; color: var(--dim); font-size: 11px; }
+  .row .value.hl { color: var(--accent); }
+  .row .value.airport-code { color: var(--accent2); font-size: 15px; letter-spacing: 1px; }
+  #routeDisplay { margin: 10px 0 4px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #routeDisplay .ap { text-align: center; flex: 1; }
+  #routeDisplay .arrow { color: var(--accent); font-size: 18px; }
+  #routeDisplay .ap-name { font-size: 10px; color: var(--dim); margin-top: 3px; }
+  #sideFoot { padding: 12px 18px; border-top: 1px solid var(--border); font-size: 10px; color: var(--dim); }
+  .section-title { margin: 18px 0 8px; font-size: 11px; color: var(--accent2); text-transform: uppercase; letter-spacing: 1px; }
+  #trajNote { font-size: 10px; color: var(--dim); margin-top: 6px; }
+
+  /* ---------- legend ---------- */
+  #legend {
+    position: fixed; left: 16px; top: 64px; z-index: 100;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-size: 10px; color: var(--dim); line-height: 1.7;
+  }
+  #legend b { color: var(--text); display: block; margin-bottom: 2px; font-size: 11px; }
+  #legend .sw { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 2px; }
+  .sw-air { background: var(--accent2); }
+  .sw-sel { background: var(--warn); }
+  .sw-traj { background: var(--accent); }
+  #planeCount { color: var(--accent); }
+
+  /* ---------- tactical layer panel (top-right) ---------- */
+  #layerPanel {
+    position: fixed; top: 64px; right: 16px; z-index: 150;
+    background: rgba(12, 16, 23, 0.85);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    border-radius: 8px;
+    padding: 10px 12px;
+    backdrop-filter: blur(10px);
+    font-size: 11px;
+    min-width: 210px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  #layerPanel .lp-title {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: #7c8ba0; margin-bottom: 8px; border-bottom: 1px solid rgba(31,42,58,0.6); padding-bottom: 6px;
+  }
+  .layer-toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 0; cursor: pointer; user-select: none;
+  }
+  .layer-toggle .lt-label { color: #d7e1ec; }
+  .layer-toggle .lt-label .lt-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; }
+  .layer-toggle input { display: none; }
+  .layer-toggle .lt-switch {
+    width: 30px; height: 16px; border-radius: 8px; background: rgba(255,255,255,0.12);
+    position: relative; transition: background 0.2s; flex-shrink: 0;
+  }
+  .layer-toggle .lt-switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+    border-radius: 50%; background: #7c8ba0; transition: all 0.2s;
+  }
+  .layer-toggle input:checked + .lt-switch { background: rgba(0, 255, 157, 0.35); }
+  .layer-toggle input:checked + .lt-switch::after { left: 16px; background: #00ff9d; }
+
+  /* ---------- playback bar (bottom) ---------- */
+  #playbackBar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 150;
+    background: rgba(12, 16, 23, 0.88);
+    border-top: 1px solid rgba(56, 189, 248, 0.25);
+    backdrop-filter: blur(10px);
+    display: flex; align-items: center; gap: 14px;
+    padding: 8px 16px;
+    font-size: 11px;
+  }
+  #btnPlay {
+    background: rgba(0, 255, 157, 0.15); border: 1px solid #00ff9d; color: #00ff9d;
+    width: 34px; height: 26px; border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1;
+    flex-shrink: 0;
+  }
+  #btnPlay:hover { background: rgba(0, 255, 157, 0.3); }
+  #speedSel {
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(31,42,58,0.8); color: #d7e1ec;
+    padding: 4px 6px; border-radius: 5px; font-family: inherit; font-size: 11px; outline: none;
+  }
+  #scrubber {
+    flex: 1; -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.15); outline: none; cursor: pointer;
+  }
+  #scrubber::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%;
+    background: #00ff9d; cursor: pointer;
+  }
+  #utcClock {
+    font-family: "Cascadia Code", Consolas, monospace; color: #00ff9d;
+    font-size: 12px; letter-spacing: 0.5px; white-space: nowrap; flex-shrink: 0;
+  }
+  #playbackBar .pb-label { color: #7c8ba0; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0; }
+
+  /* ---------- satellite info card ---------- */
+  #satInfoCard {
+    position: fixed; left: 16px; bottom: 64px; z-index: 300; display: none;
+    width: 260px; background: rgba(12,16,23,0.92); border: 1px solid rgba(192,132,252,0.4);
+    border-radius: 8px; padding: 10px 12px; font-family: Consolas, monospace; font-size: 11px;
+    color: #d7e1ec; box-shadow: 0 8px 24px rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+  }
+  #satInfoCard .si-title { color: #c084fc; font-weight: 700; font-size: 12px; margin-bottom: 6px; }
+  #satInfoCard .si-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid rgba(31,42,58,0.5); }
+  #satInfoCard .si-row .si-label { color: #7c8ba0; }
+  #satInfoCard .si-row .si-val { color: #00ff9d; }
+  #satInfoCard .si-close { position: absolute; top: 6px; right: 8px; background: none; border: none; color: #7c8ba0; cursor: pointer; font-size: 14px; }
+  #satInfoCard .si-close:hover { color: #ff3366; }
+
+  /* ---------- traffic camera sidebar (left) ---------- */
+  #camPanel {
+    position: fixed; top: 0; left: -380px; bottom: 0; width: 360px; z-index: 200;
+    background: rgba(12, 16, 23, 0.92);
+    border-right: 1px solid rgba(56, 189, 248, 0.25);
+    backdrop-filter: blur(10px);
+    transition: left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex; flex-direction: column;
+    font-size: 12px;
+  }
+  #camPanel.open { left: 0; }
+  #camHeader {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px 10px; border-bottom: 1px solid var(--border);
+  }
+  #camHeader .ch-title { font-size: 14px; font-weight: 700; color: #38bdf8; letter-spacing: 1px; }
+  #camHeader .ch-sub { font-size: 10px; color: var(--dim); margin-top: 2px; }
+  #camClose { background: none; border: none; color: var(--dim); font-size: 18px; cursor: pointer; padding: 4px 8px; }
+  #camClose:hover { color: var(--red); }
+  #camSearchWrap { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  #camSearch {
+    width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    color: var(--text); padding: 7px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; outline: none;
+  }
+  #camSearch:focus { border-color: #38bdf8; }
+  #camPresets { display: flex; gap: 6px; padding: 8px 16px 2px; flex-wrap: wrap; }
+  .cam-preset {
+    background: rgba(255,170,0,0.12); border: 1px solid rgba(255,170,0,0.4);
+    color: #ffaa28; padding: 4px 10px; border-radius: 12px; font-family: inherit;
+    font-size: 10px; cursor: pointer; white-space: nowrap; transition: background 0.15s;
+  }
+  .cam-preset:hover { background: rgba(255,170,0,0.25); }
+  #camCountBadge {
+    display: inline-block; margin: 8px 16px 4px; padding: 3px 10px; border-radius: 12px;
+    background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.4);
+    color: #38bdf8; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  }
+  #camList { flex: 1; overflow-y: auto; padding: 4px 10px 16px; }
+  .cam-item {
+    display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 6px;
+    cursor: pointer; border: 1px solid transparent; transition: background 0.15s;
+  }
+  .cam-item:hover { background: rgba(56,189,248,0.08); border-color: rgba(56,189,248,0.25); }
+  .cam-item .ci-thumb {
+    width: 44px; height: 34px; border-radius: 4px; object-fit: cover; flex-shrink: 0;
+    background: #05080f; border: 1px solid var(--border);
+  }
+  .cam-item .ci-info { min-width: 0; flex: 1; }
+  .cam-item .ci-name { color: var(--text); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cam-item .ci-meta { color: var(--dim); font-size: 10px; margin-top: 2px; }
+  .cam-item .ci-badge {
+    flex-shrink: 0; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+    padding: 2px 6px; border-radius: 3px; text-transform: uppercase;
+  }
+  .ci-badge.nyc { background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); }
+  .ci-badge.nc { background: rgba(255,170,40,0.15); color: #ffaa28; border: 1px solid rgba(255,170,40,0.3); }
+  .cam-item .ci-go { color: #00ff9d; font-size: 14px; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
+  .cam-item:hover .ci-go { opacity: 1; }
+  #camEmpty { color: var(--dim); font-size: 11px; text-align: center; padding: 24px 12px; }
+
+  /* ---------- camera button (top bar) ---------- */
+  #btnCameras {
+    background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.4);
+    color: #38bdf8; padding: 6px 12px; border-radius: 6px; font-family: inherit;
+    font-size: 12px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;
+  }
+  #btnCameras:hover { background: rgba(56,189,248,0.25); }
+  #btnCameras.active { background: rgba(56,189,248,0.3); border-color: #38bdf8; }
+
+  /* ---------- shader toggles (top bar) ---------- */
+  #shaderGroup { display: inline-flex; gap: 4px; align-items: center; }
+  #shaderGroup .shader-btn {
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    color: var(--dim); padding: 6px 8px; border-radius: 6px; font-family: inherit;
+    font-size: 10px; letter-spacing: 0.5px; cursor: pointer; white-space: nowrap;
+  }
+  #shaderGroup .shader-btn:hover { color: var(--text); border-color: var(--accent2); }
+  #shaderGroup .shader-btn.active {
+    background: rgba(0,255,157,0.15); border-color: #00ff9d; color: #00ff9d;
+    box-shadow: 0 0 6px rgba(0,255,157,0.35);
+  }
+
+  /* ---------- bookmarks (top center, under the topbar) ---------- */
+  #addrBookmark {
+    background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.4);
+    color: #38bdf8; padding: 6px 10px; border-radius: 6px; font-family: inherit;
+    font-size: 12px; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  #addrBookmark:hover { background: rgba(56,189,248,0.25); }
+  #addrBookmark.saved { background: rgba(255,170,0,0.2); border-color: #ffaa00; color: #ffaa28; }
+  #addrBookmarks {
+    position: fixed; top: 100px; left: 50%; transform: translateX(-50%); z-index: 179;
+    display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 640px;
+    padding: 0 10px; pointer-events: none;
+  }
+  .addr-chip {
+    pointer-events: auto; background: rgba(12,16,23,0.85); border: 1px solid rgba(255,170,0,0.4);
+    color: #ffaa28; padding: 3px 10px; border-radius: 12px; font-family: inherit;
+    font-size: 10px; cursor: pointer; white-space: nowrap; backdrop-filter: blur(6px);
+    display: inline-flex; align-items: center; gap: 5px; transition: background 0.15s;
+  }
+  .addr-chip:hover { background: rgba(255,170,0,0.2); }
+  .addr-chip .chip-x { color: #7c8ba0; font-size: 11px; cursor: pointer; }
+  .addr-chip .chip-x:hover { color: var(--red); }
+
+  /* ---------- World War Watch (AGENT 2) ---------- */
+  #wwwPanel {
+    position: fixed; top: 180px; left: 16px; z-index: 150;
+    background: rgba(12, 16, 23, 0.85);
+    border: 1px solid rgba(255, 60, 60, 0.35);
+    border-radius: 8px; padding: 10px 12px;
+    backdrop-filter: blur(10px); font-size: 11px; min-width: 200px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  #wwwPanel .www-title {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: #ff5a5a; margin-bottom: 8px; border-bottom: 1px solid rgba(255,60,60,0.25); padding-bottom: 6px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #wwwPanel .www-title .www-counts { color: #7c8ba0; font-size: 9px; letter-spacing: 0.5px; }
+  #wwwModeRow { display: flex; gap: 4px; margin-bottom: 8px; }
+  #wwwModeRow button {
+    flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    color: var(--dim); border-radius: 4px; padding: 4px 6px; font-family: inherit;
+    font-size: 10px; letter-spacing: 0.5px; cursor: pointer;
+  }
+  #wwwModeRow button.active-live { background: rgba(0,255,157,0.15); border-color: #00ff9d; color: #00ff9d; }
+  #wwwModeRow button.active-pb { background: rgba(56,189,248,0.2); border-color: #38bdf8; color: #38bdf8; }
+  #wwwSpeedRow { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  #wwwSpeedRow .pb-label { color: #7c8ba0; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  #wwwSpeedSel {
+    flex: 1; background: rgba(255,255,255,0.06); border: 1px solid rgba(31,42,58,0.8);
+    color: #d7e1ec; padding: 3px 6px; border-radius: 5px; font-family: inherit; font-size: 11px; outline: none;
+  }
+  #wwwPlaybackStamp {
+    font-family: Consolas, monospace; color: #38bdf8; font-size: 10px;
+    letter-spacing: 0.5px; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #wwwToggles { display: flex; flex-direction: column; gap: 4px; }
+  #wwwToggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: #d7e1ec; user-select: none; }
+  #wwwToggles input { accent-color: #ff4444; }
+
+  /* attack card */
+  #attackCard {
+    position: fixed; right: 16px; bottom: 52px; z-index: 300; display: none;
+    width: 320px; background: rgba(13,18,28,0.95); border: 1px solid #ff4444;
+    border-radius: 8px; padding: 12px 14px; font-family: Consolas, monospace;
+    font-size: 12px; color: #d7e1ec; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    backdrop-filter: blur(8px);
+  }
+  #attackCard .ac-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  #attackCard .ac-title { font-weight: 700; color: #ff4444; letter-spacing: 1px; }
+  #attackClose { background: none; border: none; color: #7c8ba0; font-size: 16px; cursor: pointer; }
+  #attackClose:hover { color: #ff3366; }
+  #attackName { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 8px; }
+  #attackRows .ac-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid rgba(31,42,58,0.5); }
+  #attackRows .ac-row .ac-label { color: #7c8ba0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+  #attackRows .ac-row .ac-val { color: #ffcc66; text-align: right; word-break: break-word; }
+  #attackRows .ac-row .ac-val.verified { color: #00ff9d; }
+  #attackRows .ac-row .ac-val.unverified { color: #ffaa00; }
+
+  /* windowed live stream */
+  #streamWindow {
+    position: fixed; right: 16px; bottom: 52px; z-index: 310; display: none;
+    width: 420px; background: rgba(10, 14, 20, 0.95); border: 1px solid rgba(255, 60, 60, 0.5);
+    border-radius: 8px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px);
+  }
+  #streamHeader {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 10px; background: rgba(255, 60, 60, 0.12); border-bottom: 1px solid rgba(255,60,60,0.3);
+  }
+  #streamTitle { color: #ff5a5a; font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #streamClose { background: none; border: none; color: #7c8ba0; font-size: 14px; cursor: pointer; }
+  #streamClose:hover { color: #ff3366; }
+  #streamFrame { width: 100%; height: 236px; border: none; display: block; background: #05080f; }
+  #streamEmpty { width: 100%; height: 236px; display: none; align-items: center; justify-content: center; color: #7c8ba0; font-size: 11px; text-align: center; padding: 12px; }
+
+  /* WWW news ticker — bottom scrolling headlines (above the playback bar) */
+  #wwwTicker {
+    position: fixed; left: 0; right: 0; bottom: 44px; height: 30px;
+    background: rgba(10, 14, 20, 0.92); border-top: 1px solid rgba(255, 68, 68, 0.4);
+    display: flex; align-items: center; z-index: 320; overflow: hidden;
+    font-family: Consolas, monospace; font-size: 11px; color: #d7e1ec;
+  }
+  #wwwTickerLabel {
+    flex: 0 0 auto; padding: 0 12px; height: 100%; display: flex; align-items: center;
+    background: rgba(255, 68, 68, 0.85); color: #fff; font-weight: 700;
+    letter-spacing: 1px; font-size: 10px; z-index: 2;
+  }
+  #wwwTickerTrack {
+    flex: 1 1 auto; overflow: hidden; white-space: nowrap; position: relative;
+  }
+  #wwwTickerTrack .ticker-item {
+    display: inline-block; padding: 0 28px; color: #ffb3b3; white-space: nowrap;
+  }
+  #wwwTickerTrack .ticker-item b { color: #ff5555; }
+  #wwwTickerTrack .ticker-item .tk-events { color: #ffcc66; }
+
+  @media (max-width: 900px) {
+    #airlineFilter, #btnReset { display: none; }
+    #sidebar { width: 92vw; }
+    #camPanel { width: 88vw; }
+  }
+</style>
+</head>
+<body>
+<div id="cesiumContainer"></div>
+
+<div id="topbar">
+  <div id="logo">WORLD<span>WAR</span> WATCH<span id="verTag">v2.2</span></div>
+  <div id="liveBadge"><span class="dot"></span>LIVE&nbsp;ADS-B</div>
+  <div id="modeToggle" style="display:flex;gap:4px;margin-left:8px;font-family:Consolas,monospace;font-size:10px;">
+    <button id="modeLive" style="background:rgba(0,255,157,0.15);border:1px solid #00ff9d;color:#00ff9d;border-radius:4px;padding:3px 8px;cursor:pointer;">● LIVE</button>
+    <button id="modePlayback" style="background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.4);color:#7dd3fc;border-radius:4px;padding:3px 8px;cursor:pointer;">▶ PLAYBACK</button>
+  </div>
+  <div id="stats"><b id="planeCount">0</b> aircraft · <b id="shipCount">0</b> ships · poll <b id="pollTimer">--</b>s</div>
+  <input id="searchBox" type="text" placeholder="Search flight / airline / airport / address… (Enter = fly to address)" autocomplete="off" />
+  <button id="addrBookmark" title="Save location">⭐</button>
+  <div id="filterRow">
+        <select id="airlineFilter"><option value="">All airlines</option></select>
+    <button id="btnCameras" title="Traffic cameras">📷 <span id="btnCamCount">Cams</span></button>
+    <button id="btnReset">Reset view</button>
+    <div id="shaderGroup" title="Post-process shaders (NVG / FLIR / CRT)">
+      <button id="shaderNvg" class="shader-btn">NVG</button>
+      <button id="shaderFlir" class="shader-btn">FLIR</button>
+      <button id="shaderCrt" class="shader-btn">CRT</button>
+    </div>
+  </div>
+</div>
+
+<div id="camPanel">
+  <div id="camHeader">
+    <div>
+      <div class="ch-title">TRAFFIC CAMERAS</div>
+      <div class="ch-sub">NYC DOT · NC DOT · live snapshots</div>
+    </div>
+    <button id="camClose" title="Close (Esc)">✕</button>
+  </div>
+  <div id="camSearchWrap">
+    <input id="camSearch" type="text" placeholder="Search city / area / street… (e.g. I-95, Brooklyn, Raleigh)" autocomplete="off" />
+  </div>
+  <div id="camPresets">
+    <button class="cam-preset" data-lat="35.7914" data-lon="-78.5486" data-name="Knightdale, NC">📍 Knightdale, NC</button>
+    <button class="cam-preset" data-lat="40.6687" data-lon="-73.9311" data-name="Brownsville, Brooklyn">📍 Brownsville, Brooklyn</button>
+  </div>
+  <div id="camCountBadge">— Cameras</div>
+  <div id="camList"></div>
+</div>
+
+<div id="addrBookmarks"></div>
+
+<div id="satInfoCard">
+  <button class="si-close" id="satInfoClose" title="Close">✕</button>
+  <div class="si-title" id="satInfoName">—</div>
+  <div class="si-row"><span class="si-label">NORAD Catalog</span><span class="si-val" id="satInfoCat">—</span></div>
+  <div class="si-row"><span class="si-label">Orbit Altitude</span><span class="si-val" id="satInfoAlt">—</span></div>
+  <div class="si-row"><span class="si-label">Velocity</span><span class="si-val" id="satInfoVel">—</span></div>
+  <div class="si-row"><span class="si-label">Sensor</span><span class="si-val" id="satInfoSensor">—</span></div>
+  <div class="si-row"><span class="si-label">Status</span><span class="si-val" id="satInfoStatus">TRACKING</span></div>
+  <div class="si-row"><span class="si-label">Ground Target</span><span class="si-val" id="satInfoGround">—</span></div>
+  <div style="display:flex;gap:6px;margin-top:8px;">
+    <button id="satReconBtn" style="flex:1;background:rgba(192,132,252,0.15);border:1px solid #c084fc;color:#c084fc;border-radius:4px;padding:5px 8px;font-family:Consolas,monospace;font-size:10px;cursor:pointer;">🔭 RECON ZOOM</button>
+    <button id="satOrbitBtn" style="flex:1;background:rgba(56,189,248,0.12);border:1px solid #38bdf8;color:#38bdf8;border-radius:4px;padding:5px 8px;font-family:Consolas,monospace;font-size:10px;cursor:pointer;">🛰 RETURN TO ORBIT</button>
+  </div>
+</div>
+
+<!-- satellite recon HUD (space-to-ground zoom overlay) -->
+<div id="reconHud" style="display:none;position:fixed;inset:0;z-index:250;pointer-events:none;">
+  <!-- crosshair reticle -->
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:120px;height:120px;">
+    <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(0,255,157,0.7);"></div>
+    <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(0,255,157,0.7);"></div>
+    <div style="position:absolute;top:0;left:50%;width:20px;height:20px;transform:translateX(-50%);border-top:2px solid #00ff9d;border-left:2px solid #00ff9d;"></div>
+    <div style="position:absolute;top:0;right:0;width:20px;height:20px;border-top:2px solid #00ff9d;border-right:2px solid #00ff9d;"></div>
+    <div style="position:absolute;bottom:0;left:0;width:20px;height:20px;border-bottom:2px solid #00ff9d;border-left:2px solid #00ff9d;"></div>
+    <div style="position:absolute;bottom:0;right:0;width:20px;height:20px;border-bottom:2px solid #00ff9d;border-right:2px solid #00ff9d;"></div>
+    <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:6px;height:6px;border-radius:50%;background:#ff3366;box-shadow:0 0 8px #ff3366;"></div>
+  </div>
+  <!-- HUD card -->
+  <div style="position:absolute;left:16px;top:64px;width:280px;background:rgba(12,16,23,0.92);border:1px solid #c084fc;border-radius:8px;padding:12px 14px;font-family:Consolas,monospace;font-size:11px;color:#d7e1ec;backdrop-filter:blur(8px);pointer-events:auto;">
+    <div style="font-weight:700;color:#c084fc;letter-spacing:1px;margin-bottom:6px;">🛰 RECONNAISSANCE</div>
+    <div id="reconName" style="font-size:12px;font-weight:700;color:#fff;"></div>
+    <div id="reconCat" style="color:#7c8ba0;font-size:10px;margin-bottom:8px;"></div>
+    <div class="si-row"><span class="si-label">Target Lat</span><span class="si-val" id="reconLat">—</span></div>
+    <div class="si-row"><span class="si-label">Target Lon</span><span class="si-val" id="reconLon">—</span></div>
+    <div class="si-row"><span class="si-label">View Alt</span><span class="si-val" id="reconAlt">—</span></div>
+    <div class="si-row"><span class="si-label">Sensor</span><span class="si-val" id="reconSensor">EO / IR (est.)</span></div>
+    <div style="display:flex;gap:6px;margin-top:8px;">
+      <button id="reconCapture" style="flex:1;background:rgba(0,255,157,0.12);border:1px solid #00ff9d;color:#00ff9d;border-radius:4px;padding:6px 8px;font-family:Consolas,monospace;font-size:10px;cursor:pointer;">📸 CAPTURE TILE</button>
+      <button id="reconExit" style="flex:1;background:rgba(255,51,102,0.12);border:1px solid #ff3366;color:#ff3366;border-radius:4px;padding:6px 8px;font-family:Consolas,monospace;font-size:10px;cursor:pointer;">✕ EXIT</button>
+    </div>
+    <div id="reconTile" style="margin-top:8px;display:none;text-align:center;">
+      <img id="reconTileImg" style="max-width:100%;border-radius:4px;border:1px solid rgba(0,255,157,0.4);" />
+      <div style="color:#7c8ba0;font-size:9px;margin-top:4px;">Esri World Imagery · live tile</div>
+    </div>
+  </div>
+</div>
+
+<div id="legend">
+  <b>Legend</b>
+  <span class="sw sw-air"></span>Flying aircraft<br />
+  <span class="sw sw-sel"></span>Selected<br />
+  <span class="sw sw-traj"></span>Trajectory (last ~15 min)<br />
+  <span>Data: OpenSky Network (real ADS-B)</span>
+</div>
+
+<div id="status"><span id="statusText">Starting…</span> <span id="fpsCounter" style="margin-left:10px;color:#00ff9d;font-size:10px;"></span></div>
+
+<div id="layerPanel">
+  <div class="lp-title">Data Layers</div>
+  <!-- v2.0 spec: glassmorphic HUD stats (FPS + live entity counts) -->
+  <div id="hudStats" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(31,42,58,0.6);font-size:10px;color:#7c8ba0;">
+    <span title="Frames per second"><span id="hudFps" style="color:#00ff9d;font-weight:700;">--</span> FPS</span>
+    <span title="Aircraft"><span id="hudPlanes" style="color:#38bdf8;font-weight:700;">0</span> A/C</span>
+    <span title="Ships"><span id="hudShips" style="color:#00ff9d;font-weight:700;">0</span> SHIPS</span>
+    <span title="Fires"><span id="hudFires" style="color:#ff4422;font-weight:700;">0</span> FIRES</span>
+    <span title="Satellites"><span id="hudSats" style="color:#c084fc;font-weight:700;">0</span> SATS</span>
+  </div>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#38bdf8"></span>Commercial Flights (ADS-B)</span>
+    <input type="checkbox" id="toggleFlights" checked /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#ff4444"></span>Military &amp; Defense</span>
+    <input type="checkbox" id="toggleMilitary" checked /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#c084fc"></span>Satellite Orbits (TLE)</span>
+    <input type="checkbox" id="toggleSatellites" checked /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#ff3366"></span>GPS Jamming Zones</span>
+    <input type="checkbox" id="toggleJamming" /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#ff3366"></span>Restricted Airspace</span>
+    <input type="checkbox" id="toggleRestricted" /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#ffcc00"></span>Simulate Traffic</span>
+    <input type="checkbox" id="toggleTraffic" /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#b388ff"></span>3D Buildings</span>
+    <input type="checkbox" id="toggleBuildings" checked /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#38bdf8"></span>Live Maritime (AIS)</span>
+    <input type="checkbox" id="toggleShips" checked /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#ff4422"></span>Live Fires (NASA FIRMS)</span>
+    <input type="checkbox" id="toggleFires" checked /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#ff9f43"></span>Hurricanes (NHC)</span>
+    <input type="checkbox" id="toggleHurricanes" checked /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#e8e8f0"></span>Cloud Cover</span>
+    <input type="checkbox" id="toggleClouds" /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#00e5ff"></span>Live Rain Radar</span>
+    <input type="checkbox" id="toggleRadar" /><span class="lt-switch"></span>
+  </label>
+  <label class="layer-toggle">
+    <span class="lt-label"><span class="lt-dot" style="background:#7dd3fc"></span>Camera Rain/Fog</span>
+    <input type="checkbox" id="toggleRainFx" /><span class="lt-switch"></span>
+  </label>
+</div>
+
+<div id="wwwPanel">
+  <div class="www-title">⚔ World War Watch <span class="www-counts" id="wwwCounts">zones — · dots —</span></div>
+  <div id="wwwModeRow">
+    <button id="wwwModeLive" class="active-live">● LIVE</button>
+    <button id="wwwModePlayback">▶ PLAYBACK</button>
+  </div>
+  <div id="wwwSpeedRow">
+    <span class="pb-label">Speed</span>
+    <select id="wwwSpeedSel">
+      <option value="1800">30M/S</option>
+      <option value="7200" selected>2H/S</option>
+      <option value="21600">6H/S</option>
+    </select>
+  </div>
+  <div id="wwwPlaybackStamp">LIVE — real-time telemetry</div>
+  <div id="wwwHotZone" style="display:none;margin-top:6px;padding:5px 8px;background:rgba(255,68,68,0.12);border:1px solid rgba(255,68,68,0.4);border-radius:4px;font-size:10px;color:#ff8888;letter-spacing:0.5px;"></div>
+  <div id="wwwToggles">
+    <label><input type="checkbox" id="wwwToggleZones" checked /> Red haze zones</label>
+    <label><input type="checkbox" id="wwwToggleDots" checked /> Hotspot dots</label>
+    <label><input type="checkbox" id="wwwBotToggle" checked /> Red bot patrol</label>
+    <div id="wwwBotStatus" style="margin-top:4px;padding:4px 8px;background:rgba(255,68,68,0.12);border:1px solid rgba(255,68,68,0.4);border-radius:4px;font-size:10px;color:#ff8888;letter-spacing:0.5px;">🤖 red bot armed</div>
+  </div>
+</div>
+
+<div id="attackCard">
+  <div class="ac-header">
+    <div class="ac-title">⚔ ATTACK REPORT</div>
+    <button id="attackClose" title="Close (Esc)">✕</button>
+  </div>
+  <div id="attackName">—</div>
+  <div id="attackRows"></div>
+</div>
+
+<div id="streamWindow">
+  <div id="streamHeader">
+    <span id="streamTitle">LIVE FEED</span>
+    <button id="streamClose" title="Close (Esc)">✕</button>
+  </div>
+  <iframe id="streamFrame" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+  <div id="streamEmpty">No live feed available for this zone.</div>
+  <a id="streamWatchLink" href="#" target="_blank" rel="noopener" style="display:none;position:absolute;bottom:6px;right:8px;background:rgba(255,68,68,0.85);color:#fff;font-size:10px;font-family:Consolas,monospace;padding:3px 8px;border-radius:4px;text-decoration:none;z-index:5;">▶ WATCH ON YOUTUBE</a>
+</div>
+
+<!-- WWW news ticker — scrolling headlines from the hot zones (red bot) -->
+<div id="wwwTicker">
+  <div id="wwwTickerLabel">⚔ HOT ZONES</div>
+  <div id="wwwTickerTrack"></div>
+</div>
+
+<!-- Hotspot live-stream modal — 24/7 channel-based embeds (never expire) -->
+<div id="hotspotModal" style="display:none;position:fixed;right:16px;bottom:52px;width:480px;height:300px;background:rgba(10,14,20,0.96);border:1px solid rgba(255,68,68,0.5);border-radius:8px;z-index:310;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,0.6);">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:rgba(255,68,68,0.15);border-bottom:1px solid rgba(255,68,68,0.3);">
+    <span id="hotspotTitle" style="color:#ff5a5a;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">LIVE FEED</span>
+    <button id="hotspotClose" style="background:none;border:none;color:#7c8ba0;font-size:14px;cursor:pointer;">✕</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(12,16,23,0.9);border-bottom:1px solid rgba(255,68,68,0.2);">
+    <span style="color:#7c8ba0;font-size:9px;letter-spacing:1px;text-transform:uppercase;">Channel</span>
+    <select id="hotspotChannelSel" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid rgba(31,42,58,0.8);color:#d7e1ec;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;font-size:10px;outline:none;"></select>
+  </div>
+  <iframe id="hotspotIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" style="width:100%;height:calc(100% - 58px);border:none;background:#05080f;"></iframe>
+  <div id="hotspotNoLive" style="display:none;position:absolute;top:58px;left:0;right:0;bottom:0;background:#05080f;color:#ff6b6b;font:11px Consolas,monospace;padding:28px 20px;text-align:center;line-height:1.8;">⏸ NONE OF THESE CHANNELS ARE LIVE RIGHT NOW<br><span style="color:#8fa3b8;font-size:10px;">Streams only play while a channel is broadcasting.<br>Pick another channel, or open YouTube directly.</span></div>
+  <a id="hotspotWatchLink" href="#" target="_blank" rel="noopener" style="display:none;position:absolute;bottom:6px;right:8px;background:rgba(255,68,68,0.85);color:#fff;font-size:10px;font-family:Consolas,monospace;padding:3px 8px;border-radius:4px;text-decoration:none;z-index:5;">▶ WATCH ON YOUTUBE</a>
+</div>
+
+<div id="playbackBar">
+  <button id="btnPlay" title="Play/Pause">▶</button>
+  <span class="pb-label">Speed</span>
+  <select id="speedSel">
+    <option value="1">1x</option>
+    <option value="10">10x</option>
+    <option value="60">60x</option>
+    <option value="900">15m/sec</option>
+  </select>
+  <span class="pb-label">Timeline</span>
+  <input type="range" id="scrubber" min="0" max="100" value="100" />
+  <span id="utcClock">—</span>
+</div>
+
+<aside id="sidebar">
+  <div id="sideHeader">
+    <div>
+      <div id="sideTitle">—</div>
+      <div id="sideCallsign">—</div>
+    </div>
+    <button id="btnClose" title="Close (Esc)">✕</button>
+  </div>
+  <div id="sideBody"></div>
+  <div id="sideFoot">WorldView · OpenSky Network · positions update ~10s</div>
+</aside>
+
+<script src="/static/shaders.js?v=3"></script>
+<script>
+"use strict";
+
+/* ============================================================
+   Cesium setup
+   ============================================================ */
+const viewer = new Cesium.Viewer("cesiumContainer", {
+  baseLayer: Cesium.ImageryLayer.fromProviderAsync(
+    Cesium.ArcGisMapServerImageryProvider.fromUrl(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer",
+      { enablePickFeatures: false }
+    )
+  ),
+  // PERF: request the dedicated GPU explicitly (powerPreference) + sane
+  // context flags. failIfMajorPerformanceCaveat=false keeps software GL as
+  // a fallback so the app still runs on machines without a GPU.
+  contextOptions: {
+    webgl: {
+      powerPreference: "high-performance",
+      failIfMajorPerformanceCaveat: false,
+      alpha: false,
+      depth: true,
+      stencil: true,
+      antialias: true,
+    },
+  },
+  requestRenderMode: false,   // smooth continuous frame rate
+  maximumRenderStateDeferral: 0,
+  // v2.0 spec: built-in Cesium FPS readout (top-left, small green text)
+  debugShowFramesPerSecond: true,
+  timeline: false,
+  animation: false,
+  baseLayerPicker: false,
+  geocoder: false,
+  homeButton: true,
+  sceneModePicker: false,
+  navigationHelpButton: false,
+  fullscreenButton: false,
+  infoBox: false,
+  selectionIndicator: false,
+});
+window.viewer = viewer;
+
+// ============ Shader module (NVG / FLIR / CRT) — Agent 2/3 wiring ============
+// shaders.js exposes window.WorldViewShaders; init attaches the 3 PostProcess
+// stages (all disabled by default). Guarded so the app still boots if the
+// module is missing.
+if (window.WorldViewShaders) {
+  try { WorldViewShaders.init(viewer); } catch (e) { console.warn("WorldViewShaders.init failed:", e); }
+}
+
+// ============ GPU load reduction (v1.51 — "too much GPU, app not smooth") ====
+// MSAA 4x is the single biggest GPU cost on a 1600x900 canvas — drop to 1
+// (off) and rely on FXAA (cheap post-process) for edge smoothing.
+viewer.scene.msaaSamples = 2;   // 2x MSAA — crisp edges, still cheap (4x was the GPU hog)
+// HDR rendering uses float framebuffers — expensive. Off.
+viewer.scene.highDynamicRange = false;
+// FXAA is ~free compared to MSAA — keep it for crisp edges.
+viewer.scene.fxaa = true;
+// FULL resolution — Boo: "whats the use doing all this work if you can
+// enjoy the view". The adaptive controller below only drops it when the
+// frame rate genuinely sags (FPS < 25), and raises it right back.
+viewer.resolutionScale = 1.0;
+// Fewer imagery tiles per frame (2 -> 4) — less texture upload + fill.
+viewer.scene.globe.maximumScreenSpaceError = 2;   // HIGH-REZ: 2 = Cesium default — loads the sharpest imagery tiles (4 was blurry)
+
+// FPS counter (updates 2x/sec, cheap) — feeds #fpsCounter (status bar) and
+// #hudFps (top-right glassmorphic HUD)
+(function () {
+  let frames = 0, last = performance.now();
+  const el = document.getElementById("fpsCounter");
+  const hudEl = document.getElementById("hudFps");
+  function tick() {
+    frames++;
+    const now = performance.now();
+    if (now - last >= 500) {
+      const fps = Math.round((frames * 1000) / (now - last));
+      if (el) el.textContent = fps + " FPS";
+      if (hudEl) hudEl.textContent = fps;
+      frames = 0;
+      last = now;
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+
+// ============ Adaptive resolution controller ============
+// Uses the idle GPU when it can (raises resolution when FPS is high) and
+// protects the frame rate when it can't (drops resolution when FPS sags).
+// Range 0.5 (low) .. 0.85 (high), steps of 0.05, checked every 2s.
+(function () {
+  let frames = 0, last = performance.now(), lastAdjust = performance.now();
+  function tick() {
+    frames++;
+    const now = performance.now();
+    if (now - last >= 2000) {
+      const fps = (frames * 1000) / (now - last);
+      frames = 0;
+      last = now;
+      // only adjust every 2s to avoid oscillation
+      if (now - lastAdjust >= 2000) {
+        lastAdjust = now;
+        const cur = viewer.resolutionScale;
+        if (fps < 25 && cur > 0.8) {
+          viewer.resolutionScale = Math.max(0.8, cur - 0.05);   // HIGH-REZ floor: never below 0.8
+        } else if (fps > 40 && cur < 1.0) {
+          viewer.resolutionScale = Math.min(1.0, cur + 0.05);
+        }
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+// NO custom terrain — the ArcGIS Terrain3D swap was breaking the surface
+// (gray wash at street level). Flat ellipsoid = the config that worked at
+// launch. Terrain can be re-tried later with proper testing.
+viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+
+// ---- 3D Terrain: config-driven (v1.54) ----
+// Google Photorealistic 3D Tiles needs a billing-enabled Map Tiles API key.
+// The key is read from the GOOGLE_3D_TILES_KEY env var (never hardcoded,
+// never shipped in the EXE) and exposed via /api/config. Without a key we
+// ---- 3D TERRAIN: ENABLED (v3.1 re-test verdict) ----
+// ArcGIS Terrain3D (free, keyless) — real 3D elevation: hills, mountains,
+// valleys. The old "gray-wash" verdict was WRONG: the 2% measurements were
+// taken while street-level imagery tiles were still streaming (dark navy
+// baseColor dominated the frame). With proper settle time the color is
+// IDENTICAL to flat (37.6% vs 38.2%) — terrain is safe.
+Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(
+  "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer"
+).then(function (tp) {
+  viewer.terrainProvider = tp;
+  // belt-and-suspenders: keep the atmosphere off (it silently re-enables
+  // on terrain swaps and washes imagery out at street level)
+  viewer.scene.globe.showGroundAtmosphere = false;
+  viewer.scene.globe.dynamicAtmosphereLighting = false;
+});
+// depth test against the globe surface — entities on the far side of the
+// Earth (fires, ships, planes) get occluded instead of x-raying through
+viewer.scene.globe.depthTestAgainstTerrain = true;
+// NO day/night cycle — the whole globe stays fully lit so the ground is
+// ALWAYS visible (night-side shadow made the Earth too dark to see).
+viewer.scene.globe.enableLighting = false;
+viewer.scene.globe.showGroundAtmosphere = false;
+viewer.scene.globe.dynamicAtmosphereLighting = false;
+// bright slate-blue ambient fill so the night side stays clearly lit
+viewer.scene.globe.nightColor = new Cesium.Color(0.2, 0.25, 0.35, 1.0);
+
+// belt-and-suspenders: force the atmosphere OFF on every camera move —
+// terrain swaps and surface rebuilds silently re-enable it, which washes
+// the imagery out at street level (verified by A/B test)
+viewer.camera.changed.addEventListener(() => {
+  viewer.scene.globe.showGroundAtmosphere = false;
+  viewer.scene.globe.dynamicAtmosphereLighting = false;
+});
+
+// ---- Ion-powered 3D (Google Photorealistic + World Terrain + OSM Buildings) ----
+// Boo's free Cesium Ion token (ion_token.json, loaded by the server) enables
+// the REAL 3D stack. LAZY-LOADED: the flat globe boots instantly, and the
+// photoreal tileset streams in only when the camera zooms below 500km —
+// exactly like the video (globe from space first, 3D resolves on approach).
+// This killed the "quit or wait" freeze (tileset + 25K entities at boot).
+let googleTileset = null;
+let googleTilesLoading = false;
+let googleTilesLoaded = false;
+
+async function loadGoogleTilesLazy() {
+  if (googleTilesLoaded || googleTilesLoading) return;
+  googleTilesLoading = true;
+  try {
+    const cfg = await (await fetch("/api/config")).json();
+    const token = cfg && cfg.ion_token;
+    if (!token) {
+      // v2.0 spec: no Ion token -> fall back to OSM Buildings (also Ion-
+      // hosted, but try it anyway; if that fails too, stay on flat globe)
+      await loadOsmBuildingsFallback();
+      googleTilesLoading = false;
+      return;
+    }
+    Cesium.Ion.defaultAccessToken = token;
+    const tileset = await Cesium.createGooglePhotorealistic3DTileset();
+    viewer.scene.primitives.add(tileset);
+    googleTileset = tileset;
+    googleTilesLoaded = true;
+    // The globe-as-backdrop experiment FAILED: with depthTestAgainstTerrain
+    // true, the globe surface wins the depth test against the tileset →
+    // tileset invisible → "all blue, no ground". Reverted to v3.3: hide the
+    // globe — the photoreal tileset replaces it (the look that worked).
+    viewer.scene.globe.show = false;
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0b1320");
+    for (let i = 0; i < viewer.imageryLayers.length; i++) {
+      viewer.imageryLayers.get(i).show = false;
+    }
+    console.log("[worldview] Google Photorealistic 3D Tiles loaded — VIDEO LOOK");
+  } catch (e) {
+    console.log("[worldview] Google photoreal failed:", e.message);
+    // v2.0 spec: fallback — OSM Buildings 3D tileset (Ion-hosted)
+    try {
+      await loadOsmBuildingsFallback();
+    } catch (e2) {
+      console.log("[worldview] OSM Buildings fallback failed:", e2.message);
+    }
+  }
+  googleTilesLoading = false;
+}
+
+// v2.0 spec: fallback tileset — Cesium OSM Buildings (Ion asset 96188).
+// Unlike photoreal tiles, buildings sit ON TOP of the imagery globe, so the
+// globe stays visible (no globe.show=false here).
+async function loadOsmBuildingsFallback() {
+  if (googleTilesLoaded || window.__osmBuildingsLoaded) return;
+  const tileset = await Cesium.createOsmBuildingsAsync();
+  viewer.scene.primitives.add(tileset);
+  window.__osmBuildingsLoaded = true;
+  console.log("[worldview] OSM Buildings 3D tileset loaded (fallback)");
+}
+
+// camera-driven: load the photoreal tileset when zoomed below 500km.
+// Once loaded it stays visible at ALL zooms — the video look (photoreal
+// globe everywhere). The "crazy tint" was the NVG shader starting enabled
+// (Cesium 1.119 ignores enabled:false in the constructor) — fixed in
+// shaders.js by force-disabling after creation.
+viewer.camera.changed.addEventListener(() => {
+  if (googleTilesLoaded || googleTilesLoading) return;
+  const h = viewer.camera.positionCartographic.height;
+  if (h < 500000) loadGoogleTilesLazy();
+});
+
+// ---- night-time city lights (NASA Black Marble / VIIRS) ----
+// DISABLED — no day/night cycle means the whole globe is lit; the night
+// layer would wash out the imagery everywhere. Kept for future re-enable.
+const nightLayer = viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/VIIRS_CityLights_2012/default/500m/{z}/{y}/{x}.jpeg",
+    maximumLevel: 8,
+    credit: "NASA Earthdata / VIIRS City Lights",
+  })
+);
+nightLayer.show = false;
+
+// CRITICAL: the Black Marble tiles are low-res (maxLevel 8) — at street level
+// they wash out the satellite imagery with a white glow. Fade the layer out
+// as the camera zooms in (only visible from high altitude / global view).
+function updateNightLayerAlpha() {
+  const h = viewer.scene.camera.positionCartographic.height;
+  const t = Cesium.Math.clamp((h - 200000) / 800000, 0, 1);  // fade in 200km→1000km
+  nightLayer.alpha = t;
+}
+viewer.camera.changed.addEventListener(updateNightLayerAlpha);
+updateNightLayerAlpha();
+
+// force ground imagery visible at night — full alpha on the dark side
+// plus brightness/contrast/gamma boost so unlit terrain stays clearly lit
+const baseLayer = viewer.imageryLayers.get(0);
+if (baseLayer) {
+  baseLayer.nightAlpha = 1.0;   // satellite imagery fully visible at night
+  baseLayer.brightness = 1.25;  // boost imagery brightness
+  baseLayer.contrast = 1.1;     // enhance ground terrain contrast
+  baseLayer.gamma = 0.8;        // lift shadows on the dark hemisphere
+}
+
+// force label/border reference layers to 100% opacity regardless of Sun
+// angle — US state lines, borders, and city names stay visible at night.
+// (skip the night-lights layer so city lights still only glow on the dark side)
+for (let i = 1; i < viewer.imageryLayers.length; i++) {
+  const layer = viewer.imageryLayers.get(i);
+  if (layer && layer !== nightLayer) {
+    layer.nightAlpha = 1.0;
+    layer.dayAlpha = 1.0;
+  }
+}
+
+// real-time clock: keep the day/night terminator synced to actual time
+viewer.clock.currentTime = Cesium.JulianDate.now();
+viewer.clock.shouldAnimate = true;
+setInterval(() => {
+  viewer.clock.currentTime = Cesium.JulianDate.now();
+}, 60000);
+
+// ---- reference overlays on top of the satellite imagery ----
+// 1) city/place labels (CartoDB Voyager, crisp text over imagery)
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png",
+    credit: "CartoDB Voyager Labels",
+    maximumLevel: 19,
+  })
+);
+// 2) international borders + US state lines + place names (Esri Reference)
+viewer.imageryLayers.addImageryProvider(
+  new Cesium.UrlTemplateImageryProvider({
+    url: "https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+    credit: "Esri Boundaries and Places",
+    maximumLevel: 19,
+  })
+);
+viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0b1320");
+// ---- opaque globe guarantees ----
+viewer.scene.globe.show = true;
+viewer.scene.globe.showSkirt = true;              // seals ground tile seams
+viewer.scene.globe.translucency.enabled = false;   // no tile transparency
+viewer.scene.skyBox.show = true;                  // opaque space background
+viewer.scene.sun.show = true;                     // sun disc visible
+viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#05080f");
+viewer.clock.shouldAnimate = true;
+
+// keep the camera from sinking under the globe when dragging/zooming —
+// 1000m floor: photoreal tiles include real building/terrain meshes, so
+// 250m put the camera INSIDE skyscrapers/mountains (the "zoomed into the
+// earth" bug). 1km clears the tallest structures and still reads street-level.
+viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2000.0;
+viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
+viewer.scene.globe.depthTestAgainstTerrain = true;
+
+// CAMERA FLOOR WATCHDOG — if the camera ever ends up underground (inside
+// photoreal building/terrain meshes = the "dark underground + page
+// unresponsive" state), yank it back up to a safe street view instantly.
+// Wheel zoom can't recover from inside geometry; this self-heals in <1s.
+// 2s cooldown so a recovery flyTo never re-triggers itself mid-flight.
+let _camFloorLast = 0;
+viewer.camera.changed.addEventListener(() => {
+  try {
+    const h = viewer.camera.positionCartographic.height;
+    const now = performance.now();
+    if (h < 300.0 && now - _camFloorLast > 2000) {
+      _camFloorLast = now;
+      const c = viewer.camera.positionCartographic;
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(
+          Cesium.Math.toDegrees(c.longitude),
+          Cesium.Math.toDegrees(c.latitude),
+          2000.0
+        ),
+        duration: 0.8,
+      });
+    }
+  } catch (e) { /* camera mid-flight — ignore */ }
+});
+
+viewer.camera.flyTo({
+  destination: Cesium.Cartesian3.fromDegrees(-95, 38, 9000000),
+  duration: 0,
+});
+
+/* ============================================================
+   Decluttering — clustering was hiding planes inside blue circles;
+   disabled so every aircraft shows as its own icon (drillPick +
+   scaleByDistance handle overlap). Kept the badge code for reference.
+   ============================================================ */
+const clustering = viewer.dataSourceDisplay.defaultDataSource.clustering;
+clustering.enabled = false;
+const clusterBadge = (() => {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  // BRIGHT cyan badge with dark text — must never read as a black circle
+  g.beginPath();
+  g.arc(32, 32, 28, 0, 2 * Math.PI);
+  g.fillStyle = "rgba(56, 189, 248, 0.92)";
+  g.fill();
+  g.lineWidth = 3;
+  g.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  g.stroke();
+  return c.toDataURL();
+})();
+clustering.clusterEvent.addEventListener((ids, cluster) => {
+  cluster.billboard.show = true;
+  cluster.billboard.image = clusterBadge;
+  cluster.billboard.scale = 0.55;
+  cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+  // no depth-test bypass — clusters occlude with the globe too
+  cluster.label.font = "bold 13px Cascadia Code, Consolas, monospace";
+  cluster.label.fillColor = Cesium.Color.fromCssColorString("#0a0e14");
+  cluster.label.outlineColor = Cesium.Color.fromCssColorString("#ffffff");
+  cluster.label.outlineWidth = 2;
+  cluster.label.style = Cesium.LabelStyle.FILL_AND_OUTLINE;
+  cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+});
+
+/* ============================================================
+   State
+   ============================================================ */
+const flights = new Map();        // icao -> latest flight object
+const traj = new Map();           // icao -> history [{lat,lon,alt,heading,t}...]
+const trajCartesian = new Map();  // icao -> [Cartesian3...] live tail (CallbackProperty source)
+const entities = new Map();       // icao -> billboard entity
+window.entities = entities;       // debug/test access
+const trajEntities = new Map();   // icao -> trajectory polyline entity
+const TRAJ_WINDOW_SEC = 900;      // keep 15 min of trajectory
+const TRAJ_MAX_PTS = 90;
+// v2.0 spec: trails cap 30 — at most 30 trajectory polylines exist at once
+// (selected flight always gets one; the rest are the first 29 in feed
+// order). 7K polylines with per-frame CallbackProperties was a render-loop
+// cost; 30 keeps tails visible without the draw-call tax.
+const TRAIL_CAP = 30;
+// poll interval adapts: 22s when authenticated (4,000 calls/day),
+// 240s anonymous (400 calls/day). Server reports `auth` on each fetch.
+const POLL_MS_AUTH = 22000;
+const POLL_MS_ANON = 240000;
+let POLL_MS = POLL_MS_ANON;
+
+let selectedIcao = null;
+let currentSearch = "";
+let currentAirline = "";
+let lastFetchTime = 0;            // epoch seconds of latest poll
+let animRef = performance.now();  // wall-clock ref for the tick interpolator
+let pollTimer = null;            // interval handle (re-created when poll speed adapts)
+const creationQueue = [];        // pending entity creations, drained per frame: {icao, kind}
+const MAX_CREATE_PER_FRAME = 400;
+
+// idle auto-rotation: realistic Earth spin from space only
+let isUserInteracting = false;
+let idleSpinRate = 0.0002;       // radians per second — ~1 full turn every few minutes
+let idleResumeTimer = null;
+const IDLE_RESUME_DELAY = 5000;  // resume rotation 5s after the last interaction
+const IDLE_SPIN_MIN_ALT = 2000000; // only spin above 2,000 km (space view)
+
+// ---- tactical layer toggles ----
+const layerState = {
+  flights: true,
+  military: true,
+  satellites: true,
+  jamming: false,
+  restricted: false,
+  ships: true,
+  fires: true,
+  hurricanes: true,
+  buildings: true,
+  wwwZones: true,
+  wwwDots: true,
+};
+const satelliteEntities = [];    // orbit polyline entities
+let satelliteLayerReady = false;
+
+// ---- playback bar state ----
+let playbackPlaying = true;
+let playbackSpeed = 1;           // multiplier applied to the sim clock
+let playbackOffset = 0;          // seconds of scrub offset (0 = live)
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+function formatAlt(ft) {
+  return ft >= 0 ? ft.toLocaleString() + " ft" : "—";
+}
+function formatSpeed(kt) {
+  return kt >= 0 ? kt.toLocaleString() + " kt" : "—";
+}
+function formatVrate(fpm) {
+  if (fpm === null || fpm === undefined) return "—";
+  return (fpm > 0 ? "↑ " : fpm < 0 ? "↓ " : "") + Math.abs(fpm).toLocaleString() + " fpm";
+}
+function headingStr(h) {
+  if (h === null || h === undefined) return "—";
+  const dirs = ["N","NE","E","SE","S","SW","W","NW"];
+  return `${h}° ${dirs[Math.round(h / 45) % 8]}`;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ============================================================
+   Trajectory sampling — smooth interpolation between polls
+   ============================================================ */
+function sampleFlight(f, t) {
+  const hist = traj.get(f.icao) || [];
+  // combine history + current position (current gets t = lastFetchTime)
+  const pts = hist.length
+    ? [...hist, { lat: f.lat, lon: f.lon, alt: f.alt_m, heading: f.heading, t: lastFetchTime }]
+    : [{ lat: f.lat, lon: f.lon, alt: f.alt_m, heading: f.heading, t: lastFetchTime }];
+  if (pts.length === 1) return pts[0];
+
+  if (t <= pts[0].t) return pts[0];
+  if (t >= pts[pts.length - 1].t) {
+    // extrapolate forward beyond the last poll (smooth motion between polls)
+    const a = pts[pts.length - 2], b = pts[pts.length - 1];
+    const span = Math.max(b.t - a.t, 0.001);
+    const k = (t - a.t) / span;
+    return {
+      lat: a.lat + (b.lat - a.lat) * k,
+      lon: a.lon + (b.lon - a.lon) * k,
+      alt: a.alt + (b.alt - a.alt) * k,
+      heading: (((b.heading - a.heading + 540) % 360 - 180) * k + a.heading + 360) % 360,
+    };
+  }
+  // binary search bracketing pair
+  let lo = 0, hi = pts.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (pts[mid].t <= t) lo = mid; else hi = mid;
+  }
+  const a = pts[lo], b = pts[hi];
+  const k = (b.t - a.t) > 0 ? (t - a.t) / (b.t - a.t) : 0;
+  return {
+    lat: a.lat + (b.lat - a.lat) * k,
+    lon: a.lon + (b.lon - a.lon) * k,
+    alt: a.alt + (b.alt - a.alt) * k,
+    heading: (((b.heading - a.heading + 540) % 360 - 180) * k + a.heading + 360) % 360,
+  };
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+function makeBillboard(f) {
+  const isSel = f.icao === selectedIcao;
+  const isMil = !!f.military;
+  const ent = viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(f.lon, f.lat, Math.max(f.alt_m, 500)),
+    billboard: {
+      image: isSel ? "/static/plane_sel.png" : (isMil ? "/static/plane_mil.png" : "/static/plane.png"),
+      rotation: Cesium.Math.toRadians(-f.heading),   // icon points North; negate for Cesium's CCW-positive rotation
+      alignedAxis: Cesium.Cartesian3.ZERO,            // screen-aligned (FR24 style)
+      scale: isSel ? 0.9 : 0.7,
+      scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.9, 3.0e6, 0.1),
+      eyeOffset: new Cesium.Cartesian3(0, 0, 50),
+      // NO disableDepthTestDistance — planes behind the horizon must be
+      // occluded by the Earth (no x-ray through the globe)
+      heightReference: Cesium.HeightReference.NONE,
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      // PERF: distance culling — don't draw planes beyond 3,000 km
+      // (GOLDEN GOOSE: at global zoom nothing draws; far side of Earth is
+      // 12,700 km away so planes can never x-ray through the planet)
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 3000000.0),
+    },
+    label: {
+      text: f.callsign,
+      font: "11px Cascadia Code, Consolas, monospace",
+      fillColor: Cesium.Color.fromCssColorString(isMil ? "#ff4444" : "#d7e1ec"),
+      outlineColor: Cesium.Color.fromCssColorString("#000000"),
+      outlineWidth: 3,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      pixelOffset: new Cesium.Cartesian2(0, -22),
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 900000),
+      // no depth-test bypass — labels occlude with their plane
+    },
+  });
+  ent._worldviewIcao = f.icao;   // pick-tag
+  return ent;
+}
+
+function makeTrajectory(f) {
+  const hist = traj.get(f.icao) || [];
+  if (hist.length < 1) return null;
+  // build the live Cartesian array: history + current position as the endpoint
+  const carr = hist.map((p) =>
+    Cesium.Cartesian3.fromDegrees(p.lon, p.lat, Math.max(p.alt, 500))
+  );
+  carr.push(Cesium.Cartesian3.fromDegrees(f.lon, f.lat, Math.max(f.alt_m, 500)));
+  trajCartesian.set(f.icao, carr);
+  const isSel = f.icao === selectedIcao;
+  const baseColor = isSel
+    ? Cesium.Color.fromCssColorString("#ffffff")
+    : (f.military
+        ? Cesium.Color.fromCssColorString("#ff4444")
+        : Cesium.Color.fromCssColorString("#00ff9d"));
+  const ent = viewer.entities.add({
+    polyline: {
+      // CallbackProperty: the tail follows the plane every frame
+      positions: new Cesium.CallbackProperty(() => trajCartesian.get(f.icao) || carr, false),
+      width: isSel ? 2.2 : 1.4,
+      // PERF: plain color material for normal tails (glow shaders on 8K
+      // polylines ×2 with depthFail stalled the render loop). Glow only
+      // for the selected plane.
+      material: isSel
+        ? new Cesium.PolylineGlowMaterialProperty({ color: baseColor, glowPower: 0.25 })
+        : new Cesium.ColorMaterialProperty(baseColor.withAlpha(0.85)),
+      depthFailMaterial: new Cesium.ColorMaterialProperty(baseColor.withAlpha(0.35)),
+      // PERF: cull the tail itself beyond 8,000 km (billboard culling alone
+      // didn't stop the polyline draw calls)
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 8000000.0),
+    },
+  });
+  ent._worldviewIcao = f.icao;   // clicking the trail selects the flight too
+  return ent;
+}
+
+function buildAirlines() {
+  api("/api/airlines").then((d) => {
+    const sel = document.getElementById("airlineFilter");
+    sel.innerHTML = '<option value="">All airlines</option>' +
+      d.airlines.sort().map((a) => `<option value="${esc(a)}">${esc(a)}</option>`).join("");
+  }).catch(() => {});
+}
+
+/* ============================================================
+   Filter / search
+   ============================================================ */
+function matches(f) {
+  if (currentAirline && f.airline !== currentAirline) return false;
+  if (currentSearch) {
+    const q = currentSearch.toLowerCase();
+    const hay = [
+      f.callsign, f.flight, f.airline, f.origin_country,
+      f.origin || "", f.destination || "", f.typecode || "", f.registration || "",
+    ].join(" ").toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+function applyFilter() {
+  for (const [icao, ent] of entities) {
+    const f = flights.get(icao);
+    const show = !!(f && matches(f)) && layerState.flights && (f.military ? layerState.military : true);
+    ent.show = show;
+    const t = trajEntities.get(icao);
+    if (t) t.show = show;
+  }
+  updateCount();
+}
+
+function updateCount() {
+  let shown = 0;
+  for (const ent of entities.values()) if (ent.show) shown++;
+  document.getElementById("planeCount").textContent = shown;
+  const hudPlanes = document.getElementById("hudPlanes");
+  if (hudPlanes) hudPlanes.textContent = shown;
+}
+
+// v2.0 spec: keep the top-right glassmorphic HUD entity counts live
+function updateHudCounts() {
+  const hudShips = document.getElementById("hudShips");
+  if (hudShips) hudShips.textContent = shipEntities.size;
+  const hudFires = document.getElementById("hudFires");
+  if (hudFires) hudFires.textContent = fireEntities.size;
+  const hudSats = document.getElementById("hudSats");
+  if (hudSats) hudSats.textContent = satTotalCount || satMarkers.length;
+}
+
+/* ============================================================
+   Selection + sidebar
+   ============================================================ */
+function renderSidebar(f) {
+  const origin = f.origin, dest = f.destination;
+  document.getElementById("sideTitle").textContent = f.callsign;
+  document.getElementById("sideCallsign").textContent =
+    [f.airline, f.model].filter(Boolean).join(" · ") || "Unknown aircraft";
+
+  document.getElementById("sideBody").innerHTML = `
+    <div id="routeDisplay">
+      <div class="ap">
+        <div class="value airport-code">${esc(origin || "?")}</div>
+        <div class="ap-name">Origin</div>
+      </div>
+      <div class="arrow">⟶</div>
+      <div class="ap">
+        <div class="value airport-code">${esc(dest || "?")}</div>
+        <div class="ap-name">Destination</div>
+      </div>
+    </div>
+    <div class="row"><span class="label">Airline</span><span class="value">${esc(f.airline || "—")}</span></div>
+    <div class="row"><span class="label">Flight</span><span class="value hl">${esc(f.callsign)}${f.flight ? " · " + esc(f.flight) : ""}</span></div>
+    <div class="row"><span class="label">Aircraft</span><span class="value">${esc(f.model || "—")}${f.typecode ? `<span class="sub">${esc(f.typecode)}</span>` : ""}</span></div>
+    <div class="row"><span class="label">Registration</span><span class="value">${esc(f.registration || "—")}</span></div>
+    <div class="row"><span class="label">Altitude</span><span class="value">${formatAlt(f.alt_ft)}<span class="sub">${(f.alt_m ?? 0).toLocaleString()} m</span></span></div>
+    <div class="row"><span class="label">Groundspeed</span><span class="value">${formatSpeed(f.speed_kt)}</span></div>
+    <div class="row"><span class="label">Heading</span><span class="value">${headingStr(f.heading)}</span></div>
+    <div class="row"><span class="label">Vertical rate</span><span class="value">${formatVrate(f.vrate_fpm)}</span></div>
+    <div class="row"><span class="label">ICAO / Country</span><span class="value">${esc(f.icao)}<span class="sub">${esc(f.origin_country || "")}</span></span></div>
+    <div class="section-title">Trajectory</div>
+    <div class="row"><span class="label">Track points</span><span class="value">${(traj.get(f.icao) || []).length}</span></div>
+    <div id="trajNote">Green line = where this aircraft has flown (last ~15 min, from live positions).</div>
+  `;
+}
+
+function selectFlight(icao) {
+  if (selectedIcao) {
+    if (entities.has(selectedIcao)) {
+      viewer.entities.remove(entities.get(selectedIcao));
+      entities.delete(selectedIcao);
+    }
+    if (trajEntities.has(selectedIcao)) {
+      viewer.entities.remove(trajEntities.get(selectedIcao));
+      trajEntities.delete(selectedIcao);
+    }
+  }
+  selectedIcao = icao;
+  if (!icao) {
+    document.getElementById("sidebar").classList.remove("open");
+    viewer.trackedEntity = undefined;   // release camera tracking
+    return;
+  }
+
+  // drop any queued creation for this flight — the selected billboard is built now
+  const qi = creationQueue.findIndex((q) => q.icao === icao);
+  if (qi >= 0) creationQueue.splice(qi, 1);
+
+  const f = flights.get(icao);
+  if (!f) return;
+
+  entities.set(icao, makeBillboard(f));
+  const t = makeTrajectory(f);
+  if (t) trajEntities.set(icao, t);
+
+  // native entity tracking: camera locks onto the plane and follows its path
+  viewer.trackedEntity = entities.get(icao);
+
+  renderSidebar(f);
+  document.getElementById("sidebar").classList.add("open");
+
+  // enrich with origin/destination
+  api(`/api/routes?icaos=${encodeURIComponent(icao)}`).then((d) => {
+    const r = (d.routes || {})[icao];
+    if (r && (r.origin || r.destination)) {
+      f.origin = r.origin;
+      f.destination = r.destination;
+      renderSidebar(f);
+    }
+  }).catch(() => {});
+}
+
+/* ============================================================
+   Data polling
+   ============================================================ */
+function updateStatus(html, cls) {
+  const el = document.getElementById("statusText");
+  el.innerHTML = html;
+  el.className = cls || "";
+}
+
+async function poll() {
+  try {
+    const t0 = performance.now();
+    const d = await api("/api/flights");
+    const fetchMs = Math.round(performance.now() - t0);
+    lastFetchTime = d.time || Math.floor(Date.now() / 1000);
+    animRef = performance.now();
+    document.getElementById("pollTimer").textContent = (fetchMs / 1000).toFixed(1);
+
+    const seen = new Set();
+    // ---- frontend plane render cap (Agent 3): keep at most ~7000 planes.
+    // Military (priority === 0) ALWAYS shown; flights without a priority
+    // field count as priority 2. Skipped flights never enter `seen`, so
+    // their entities are cleaned up as stale below — the cap is enforced
+    // on every poll, not just at creation. ----
+    const PLANE_CAP = 7000;
+    let capped = 0;
+    for (const f of d.flights || []) {
+      const prio = (f.priority === undefined || f.priority === null) ? 2 : f.priority;
+      if (prio !== 0 && capped >= PLANE_CAP) continue;   // beyond cap + non-military → skip
+      capped++;
+      seen.add(f.icao);
+      const prev = flights.get(f.icao);
+      const arr = traj.get(f.icao);
+      if (prev && arr) {
+        if (prev.lat !== f.lat || prev.lon !== f.lon || prev.alt_m !== f.alt_m) {
+          arr.push({ lat: prev.lat, lon: prev.lon, alt: prev.alt_m, heading: prev.heading, t: lastFetchTime - POLL_MS / 1000 });
+          const cutoff = lastFetchTime - TRAJ_WINDOW_SEC;
+          while (arr.length > 1 && arr[0].t < cutoff) arr.shift();
+          if (arr.length > TRAJ_MAX_PTS) arr.splice(0, arr.length - TRAJ_MAX_PTS);
+          // keep the live Cartesian tail in sync (grows for every plane)
+          const carr = trajCartesian.get(f.icao);
+          if (carr) {
+            carr.splice(0, carr.length - 1);   // drop old endpoint
+            carr.push(Cesium.Cartesian3.fromDegrees(prev.lon, prev.lat, Math.max(prev.alt_m, 500)));
+            carr.push(Cesium.Cartesian3.fromDegrees(f.lon, f.lat, Math.max(f.alt_m, 500)));
+          }
+        }
+      } else if (!arr) {
+        traj.set(f.icao, []);
+      }
+      flights.set(f.icao, f);
+
+      if (!entities.has(f.icao) && !creationQueue.some((q) => q.icao === f.icao)) {
+        // queue creation — drained a few hundred per frame in onTick so a
+        // 7600-aircraft poll never stalls the render loop with one sync burst
+        creationQueue.push({ icao: f.icao, kind: "billboard" });
+      }
+
+      if (selectedIcao === f.icao) {
+        if (trajEntities.has(f.icao)) {
+          viewer.entities.remove(trajEntities.get(f.icao));
+          trajEntities.delete(f.icao);
+        }
+        const t = makeTrajectory(f);
+        if (t) trajEntities.set(f.icao, t);
+      } else {
+        const n = (traj.get(f.icao) || []).length;
+        if (n >= 1 && !trajEntities.has(f.icao)) {
+          // v2.0 spec: trails cap 30 — skip new trails once the cap is hit
+          // (the selected flight's trail is always kept; it was created in
+          // selectFlight and is never subject to the cap)
+          if (trajEntities.size < TRAIL_CAP) {
+            trajEntities.set(f.icao, makeTrajectory(f));
+          }
+        } else if (n < 1 && trajEntities.has(f.icao)) {
+          viewer.entities.remove(trajEntities.get(f.icao));
+          trajEntities.delete(f.icao);
+        }
+      }
+    }
+
+    // drop queued creations for flights that vanished before being built
+    for (let i = creationQueue.length - 1; i >= 0; i--) {
+      if (!seen.has(creationQueue[i].icao)) creationQueue.splice(i, 1);
+    }
+
+    // remove stale flights (no longer in feed)
+    for (const icao of [...entities.keys()]) {
+      if (!seen.has(icao)) {
+        viewer.entities.remove(entities.get(icao));
+        entities.delete(icao);
+        if (trajEntities.has(icao)) {
+          viewer.entities.remove(trajEntities.get(icao));
+          trajEntities.delete(icao);
+        }
+        traj.delete(icao);
+        trajCartesian.delete(icao);
+        flights.delete(icao);
+        if (selectedIcao === icao) {
+          selectedIcao = null;
+          viewer.trackedEntity = undefined;   // stop tracking a vanished plane
+        }
+      }
+    }
+
+    applyFilter();
+    if (selectedIcao && flights.has(selectedIcao)) renderSidebar(flights.get(selectedIcao));
+
+    // adapt poll speed to the auth tier (22s authed / 240s anonymous)
+    const want = d.auth ? POLL_MS_AUTH : POLL_MS_ANON;
+    if (want !== POLL_MS) {
+      POLL_MS = want;
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = setInterval(poll, POLL_MS); }
+    }
+
+    updateStatus(d.cached
+      ? `<b>${d.count}</b> aircraft · <span class="err">OpenSky rate-limited (429) — showing last known positions</span>`
+      : `<b>${d.count}</b> aircraft · ${new Date(lastFetchTime * 1000).toLocaleTimeString()} UTC · <span class="ok">● OpenSky LIVE (real ADS-B)</span>`);
+  } catch (e) {
+    updateStatus(`<span class="err">Poll failed: ${esc(e.message)}</span> — retrying…`);
+  }
+}
+
+/* ============================================================
+   Animation loop — smooth interpolation between polls
+   ============================================================ */
+viewer.clock.onTick.addEventListener(() => {
+  if (!lastFetchTime) return;
+
+  // drain pending entity creations — at most MAX_CREATE_PER_FRAME per frame
+  let created = 0;
+  while (creationQueue.length && created < MAX_CREATE_PER_FRAME) {
+    const item = creationQueue.shift();
+    const f = flights.get(item.icao);
+    if (!f || entities.has(item.icao)) continue;   // idempotent / stale
+    entities.set(item.icao, makeBillboard(f));
+    created++;
+  }
+
+  const t = lastFetchTime + (performance.now() - animRef) / 1000;
+  for (const [icao, ent] of entities) {
+    const f = flights.get(icao);
+    if (!f || !ent.show) continue;
+    const s = sampleFlight(f, t);
+    ent.position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, Math.max(s.alt, 500));
+    ent.billboard.rotation.setValue(Cesium.Math.toRadians(-s.heading));
+    // keep the trajectory tail's live endpoint on the plane
+    const carr = trajCartesian.get(icao);
+    if (carr) {
+      carr[carr.length - 1] = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, Math.max(s.alt, 500));
+    }
+  }
+
+  // idle auto-rotation — realistic Earth spin, ONLY from space:
+  // camera above 2,000 km, user not interacting, and no plane tracked.
+  // Below 2,000 km (cities/states/ground) the view stays 100% stationary.
+  const cameraHeight = viewer.scene.camera.positionCartographic.height;
+  if (cameraHeight > IDLE_SPIN_MIN_ALT && !isUserInteracting && !viewer.trackedEntity && !viewer.selectedEntity) {
+    viewer.scene.camera.rotate(Cesium.Cartesian3.UNIT_Z, -idleSpinRate * 0.01);
+  }
+});
+
+/* ============================================================
+   Interactions
+   ============================================================ */
+// pause idle rotation while the user drags/zooms, resume 5s after they stop
+function pauseIdleSpin() {
+  isUserInteracting = true;
+  if (idleResumeTimer) clearTimeout(idleResumeTimer);
+  idleResumeTimer = setTimeout(() => { isUserInteracting = false; }, IDLE_RESUME_DELAY);
+}
+viewer.screenSpaceEventHandler.setInputAction(pauseIdleSpin, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+viewer.screenSpaceEventHandler.setInputAction(pauseIdleSpin, Cesium.ScreenSpaceEventType.MIDDLE_DOWN);
+viewer.screenSpaceEventHandler.setInputAction(pauseIdleSpin, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
+viewer.screenSpaceEventHandler.setInputAction(pauseIdleSpin, Cesium.ScreenSpaceEventType.WHEEL);
+viewer.screenSpaceEventHandler.setInputAction(pauseIdleSpin, Cesium.ScreenSpaceEventType.PINCH_START);
+
+/* ============================================================
+   Globe rotation: DEFAULT Cesium drag restored (left-click works),
+   with roll-correction so the globe stays axis-aligned (no tumble).
+   Arrow keys spin/tilt as a bonus.
+   ============================================================ */
+// keep Cesium's native rotate (enableRotate stays true — the custom
+// LEFT_DRAG replacement broke mouse spinning entirely; verified 2026-08-12)
+
+const SPIN_RAD_PER_PX = 0.0025;   // horizontal drag sensitivity
+const TILT_RAD_PER_PX = 0.0025;   // vertical drag sensitivity
+const SPACE_ALT = 500000;         // above this = keep the horizon level
+
+// keep the globe on its stand: zero out roll whenever it drifts.
+// NOTE: camera.roll is GETTER-ONLY in Cesium 1.119 (computed from the
+// orientation quaternion) — assigning it throws "Cannot set property roll".
+// Use setView() with an orientation object instead (the documented way).
+viewer.scene.postUpdate.addEventListener(function () {
+  if (Math.abs(viewer.camera.roll) > 0.001) {
+    viewer.camera.setView({
+      orientation: {
+        heading: viewer.camera.heading,
+        pitch: viewer.camera.pitch,
+        roll: 0
+      }
+    });
+  }
+});
+
+function rotateView(dx, dy) {
+  const h = viewer.camera.positionCartographic.height;
+  if (h > SPACE_ALT) {
+    // space view: spin the globe around its polar axis, tilt the view
+    if (dx) viewer.camera.rotate(Cesium.Cartesian3.UNIT_Z, -dx * SPIN_RAD_PER_PX);
+    if (dy) viewer.camera.rotateRight(dy * TILT_RAD_PER_PX);
+  } else {
+    // street/city view: look around (yaw + pitch), no roll, no tumbling
+    if (dx) viewer.camera.rotateUp(-dx * SPIN_RAD_PER_PX);
+    if (dy) viewer.camera.rotateRight(dy * TILT_RAD_PER_PX);
+  }
+}
+
+// arrow keys: Left/Right spin the globe, Up/Down tilt the view
+document.addEventListener("keydown", function (e) {
+  const STEP = 0.06;   // radians per press
+  switch (e.key) {
+    case "ArrowLeft":
+      rotateView(-STEP / SPIN_RAD_PER_PX, 0);
+      pauseIdleSpin();
+      e.preventDefault();
+      break;
+    case "ArrowRight":
+      rotateView(STEP / SPIN_RAD_PER_PX, 0);
+      pauseIdleSpin();
+      e.preventDefault();
+      break;
+    case "ArrowUp":
+      rotateView(0, -STEP / TILT_RAD_PER_PX);
+      pauseIdleSpin();
+      e.preventDefault();
+      break;
+    case "ArrowDown":
+      rotateView(0, STEP / TILT_RAD_PER_PX);
+      pauseIdleSpin();
+      e.preventDefault();
+      break;
+  }
+});
+
+// SINGLE LEFT_CLICK handler for aircraft AND cameras. cameras.js no longer
+// registers its own (Cesium keeps only one action per event type — the old
+// camera handler was silently replacing this one, killing plane clicks).
+function handleWorldViewClick(click) {
+  // drillPick returns EVERYTHING under the cursor (all depth layers) — this
+  // catches thin billboards (ships) that scene.pick() misses when zoomed out
+  const pickedObjects = viewer.scene.drillPick(click.position);
+  if (Cesium.defined(pickedObjects) && pickedObjects.length > 0) {
+    for (let i = 0; i < pickedObjects.length; i++) {
+      const entity = pickedObjects[i].id;
+      if (!entity) continue;
+      // camera click — open the live snapshot popup
+      if (entity._worldviewCamId) {
+        if (typeof window.openCamPopup === "function") {
+          window.openCamPopup(entity._worldviewCamId);
+        }
+        return;
+      }
+      // ship click — maritime info card
+      if (entity._worldviewShip) {
+        if (typeof window.openShipCard === "function") {
+          window.openShipCard(entity._worldviewShip);
+        }
+        return;
+      }
+      // satellite click — track + show detection cone
+      if (entity._worldviewSatId) {
+        selectSatellite(entity._worldviewSatId);
+        return;
+      }
+      // fire click — NASA VIIRS thermal detection card
+      // (batched PointPrimitive: the picked object IS the data via .id)
+      if (entity && entity.id && entity.id.latitude !== undefined && entity.id.confidence !== undefined) {
+        if (typeof window.openFireCard === "function") {
+          window.openFireCard(entity.id);
+        }
+        return;
+      }
+      if (entity && entity._worldviewFire) {
+        if (typeof window.openFireCard === "function") {
+          window.openFireCard(entity._worldviewFireData);
+        }
+        return;
+      }
+      // WWW hotspot dot click — attack card + windowed live stream
+      if (entity && entity._worldviewHotspot) {
+        if (typeof window.openAttackCard === "function") {
+          window.openAttackCard(entity);
+        }
+        return;
+      }
+    }
+  }
+  // prefer the candidate whose billboard position sits closest to the camera
+  // ray so that overlapping stacked icons resolve to the plane the user aimed
+  // at (drillPick order is top-to-bottom, which is usually right already)
+  const candidates = pickedObjects;
+  const ray = viewer.camera.getPickRay(click.position);
+  let bestIcao = null;
+  let bestDist = Infinity;
+  let fallbackIcao = null;
+  for (const c of candidates || []) {
+    const id = c && c.id;
+    const icao = id && id._worldviewIcao !== undefined ? id._worldviewIcao
+      : (Array.isArray(id) && id.length === 1 && id[0] && id[0]._worldviewIcao !== undefined
+          ? id[0]._worldviewIcao : undefined);
+    if (icao === undefined) continue;   // cluster badges (>=2 planes) and terrain
+    if (fallbackIcao === null) fallbackIcao = icao;
+
+    let pos = null;
+    if (id._worldviewIcao !== undefined) {
+      const p = id.position;
+      pos = p && p.getValue ? p.getValue(Cesium.JulianDate.now()) : p;
+    } else if (c.primitive && c.primitive.position) {
+      pos = c.primitive.position;
+    }
+    let d = Infinity;
+    if (pos && ray) {
+      const oc = Cesium.Cartesian3.subtract(pos, ray.origin, new Cesium.Cartesian3());
+      const t = Math.max(Cesium.Cartesian3.dot(oc, ray.direction), 0);
+      const closest = Cesium.Cartesian3.add(ray.origin,
+        Cesium.Cartesian3.multiplyByScalar(ray.direction, t, new Cesium.Cartesian3()),
+        new Cesium.Cartesian3());
+      d = Cesium.Cartesian3.distance(pos, closest);
+    } else if (pos) {
+      const sp = Cesium.SceneTransforms.worldToWindowCoordinates(viewer.scene, pos);
+      if (sp) d = Cesium.Cartesian2.distance(sp, click.position);
+    }
+    if (d < bestDist) { bestDist = d; bestIcao = icao; }
+  }
+  if (bestIcao !== null) {
+    selectFlight(bestIcao);
+  } else if (fallbackIcao !== null) {
+    selectFlight(fallbackIcao);   // e.g. polyline trail has no single position
+  } else {
+    selectFlight(null);           // clicked empty space -> deselect
+    if (typeof window.closeCamPopup === "function") window.closeCamPopup();
+    if (selectedSat) selectSatellite(null);   // also drop satellite view
+  }
+}
+viewer.screenSpaceEventHandler.setInputAction(handleWorldViewClick, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+document.getElementById("btnClose").addEventListener("click", () => selectFlight(null));
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    selectFlight(null);
+    if (selectedSat) selectSatellite(null);
+  }
+});
+document.getElementById("btnReset").addEventListener("click", () => {
+  viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(-95, 38, 9000000), duration: 1.2 });
+});
+document.getElementById("searchBox").addEventListener("input", (e) => {
+  currentSearch = e.target.value.trim();
+  applyFilter();
+});
+document.getElementById("airlineFilter").addEventListener("change", (e) => {
+  currentAirline = e.target.value;
+  applyFilter();
+});
+
+/* ============================================================
+   Satellite orbit layer (TLE via satellite.js)
+   ============================================================ */
+async function loadSatellites() {
+  try {
+    const d = await api("/api/tle");
+    const sats = d.satellites || [];
+    const total = d.total || sats.length;
+    satTotalCount = total;
+    // PERF: the active group is ~16K sats — SGP4 propagation for all of
+    // them every 500ms would melt the main thread. Render a capped subset
+    // (spread evenly across the list so it's representative) and show the
+    // TRUE total in the HUD.
+    const RENDER_CAP = 2000;
+    const step = Math.max(1, Math.floor(sats.length / RENDER_CAP));
+    let rendered = 0;
+    for (let i = 0; i < sats.length && rendered < RENDER_CAP; i += step) {
+      const sat = sats[i];
+      try {
+        const satrec = satellite.twoline2satrec(sat.line1, sat.line2);
+        // NO orbit polyline at load — trails are drawn on click only
+        // (saves memory: thousands of sats x 91 points each would be wasteful)
+        makeSatMarker(sat, satrec);
+        rendered++;
+      } catch (e) { /* skip bad TLE */ }
+    }
+    satelliteLayerReady = true;
+    applyLayerToggles();
+    console.log(`[worldview] ${rendered}/${total} satellite markers ready (trails on click)`);
+  } catch (e) {
+    console.log("[worldview] satellite layer failed:", e.message);
+  }
+}
+
+/* ============================================================
+   Satellite selection & ground detection cones
+   ============================================================ */
+const satMarkers = [];        // billboard entities per satellite
+let satTotalCount = 0;        // TRUE operational-satellite total (HUD display)
+const satCones = [];          // cone entities
+const satData = new Map();    // marker id -> {name, catId, alt, vel}
+let selectedSat = null;
+let satPrevCamera = null;   // camera state before satellite selection (restore on deselect)
+let satFollowRange = 2000000;   // camera distance from the selected satellite
+let satTrailEntity = null;   // orbital trail polyline (drawn on click only)
+// expose for debugging / agent bus
+window.satData = satData;
+window.satMarkers = satMarkers;
+
+// Follow-camera: while a satellite is selected, the camera sits AT the
+// satellite looking straight down at its ground track (the satellite's own
+// camera view, with the detection beam visible). Kicks in once the fly-in
+// arrives, then re-locks every frame so it never drifts.
+function satFollowTick() {
+  if (!selectedSat) return;
+  if (reconActive) return;   // recon zoom owns the camera — don't fight it
+  const marker = satMarkers.find((m) => m._worldviewSatId === selectedSat);
+  if (!marker) return;
+  const pos = marker.position.getValue(Cesium.JulianDate.now());
+  if (!pos) return;
+  const dist = Cesium.Cartesian3.distance(viewer.camera.positionWC, pos);
+  if (dist > satFollowRange * 1.5) return;   // still flying in — wait
+  // camera at the satellite, looking down at the ground point below it
+  const cart = Cesium.Cartographic.fromCartesian(pos);
+  const groundPos = Cesium.Cartesian3.fromRadians(cart.longitude, cart.latitude, 0);
+  viewer.camera.lookAt(groundPos, new Cesium.HeadingPitchRange(0, -Cesium.Math.PI_OVER_TWO + 0.2, cart.height));
+  // gentle pulse on the selected marker
+  const t = (Date.now() % 1200) / 1200;
+  marker.billboard.scale = 0.7 + 0.25 * Math.sin(t * Math.PI * 2);
+}
+viewer.scene.postUpdate.addEventListener(satFollowTick);
+
+// SGP4 throttle: propagate is expensive (~157 sats). Cache per-satellite
+// results and recompute at most every 500ms (2Hz) instead of every frame.
+const _satPosCache = new Map();   // satrec -> {t, pos}
+const _SAT_POS_INTERVAL_MS = 500;
+
+function getSatellitePosition(satrec, julianDate) {
+  const nowMs = Date.now();
+  const cached = _satPosCache.get(satrec);
+  if (cached && nowMs - cached.t < _SAT_POS_INTERVAL_MS) {
+    return cached.pos;
+  }
+  // Convert Cesium JulianDate to JS Date
+  const jsDate = Cesium.JulianDate.toDate(julianDate);
+
+  // Propagate SGP4 TLE
+  const positionAndVelocity = satellite.propagate(satrec, jsDate);
+  if (!positionAndVelocity || !positionAndVelocity.position) {
+    // BLINK FIX: propagate can fail transiently (bad TLE epoch, edge cases).
+    // Returning null makes Cesium HIDE the billboard -> satellites blink
+    // on/off. Return the last known position instead, and cache the miss
+    // briefly so we don't retry every frame.
+    if (cached && cached.pos) {
+      _satPosCache.set(satrec, { t: nowMs, pos: cached.pos });
+      return cached.pos;
+    }
+    return null;   // truly nothing known yet (first frame) — rare
+  }
+
+  const gmst = satellite.gstime(jsDate);
+  const positionGd = satellite.eciToGeodetic(positionAndVelocity.position, gmst);
+
+  const lonRad = positionGd.longitude;
+  const latRad = positionGd.latitude;
+  const heightMeters = positionGd.height * 1000.0; // CRITICAL: Convert km to meters!
+
+  const pos = Cesium.Cartesian3.fromRadians(lonRad, latRad, heightMeters);
+  _satPosCache.set(satrec, { t: nowMs, pos });
+  return pos;
+}
+
+function makeSatMarker(sat, satrec) {
+  // live position: CallbackProperty re-evaluates every frame with the clock
+  const livePos = new Cesium.CallbackProperty((time) => {
+    return getSatellitePosition(satrec, time);
+  }, false);   // false = NOT constant, updates continuously with clock
+
+  // altitude from mean motion for the info card (rad/min -> rad/s)
+  const mu = 398600.4418;
+  const n = satrec.no / 60;              // rad/s (satrec.no is rad/min)
+  const a = Math.cbrt(mu / (n * n));     // km
+  const altKmReal = a - 6371;
+  const vel = Math.sqrt(mu / a);         // km/s
+
+  const ent = viewer.entities.add({
+    position: livePos,
+    billboard: {
+      image: "/static/sat_icon.png",
+      scale: 0.6,
+      // GOLDEN GOOSE: small far away, grow only when you get close
+      scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.8, 2.0e6, 0.12),
+      // finite depth bypass (2,000 km): satellites stay clickable at
+      // orbital zoom but occlude behind the planet beyond — no x-ray
+      // through the Earth (was POSITIVE_INFINITY = always x-ray)
+      disableDepthTestDistance: 2000000.0,
+      verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      // GOLDEN GOOSE: only draw satellites within 2,000 km of the viewer
+      // (was: always visible — 157 icons x-raying through the planet)
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 2000000.0),
+    },
+    label: {
+      text: sat.name.slice(0, 18),
+      font: "10px Cascadia Code, Consolas, monospace",
+      fillColor: Cesium.Color.fromCssColorString("#c084fc"),
+      outlineColor: Cesium.Color.fromCssColorString("#000000"),
+      outlineWidth: 2,
+      style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+      pixelOffset: new Cesium.Cartesian2(0, -16),
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2000000),
+    },
+  });
+  ent._worldviewSatId = sat.name;
+  satData.set(sat.name, { name: sat.name, catId: satrec.satnum, altKm: altKmReal, vel: vel.toFixed(2), satrec });
+  satMarkers.push(ent);
+  return ent;
+}
+
+function selectSatellite(name) {
+  // clear previous
+  if (selectedSat && satCones.length) {
+    for (const c of satCones) viewer.entities.remove(c);
+    satCones.length = 0;
+  }
+  // remove the previous trail polyline (drawn on click only)
+  if (satTrailEntity) {
+    viewer.entities.remove(satTrailEntity);
+    satTrailEntity = null;
+  }
+  if (!name) {
+    // deselect: stop tracking, restore the camera the user had before
+    viewer.trackedEntity = undefined;
+    document.getElementById("satInfoCard").style.display = "none";
+    if (satPrevCamera) {
+      viewer.camera.flyTo({
+        destination: satPrevCamera.destination,
+        orientation: satPrevCamera.orientation,
+        duration: 1.5,
+      });
+      satPrevCamera = null;
+    }
+    selectedSat = null;
+    return;
+  }
+  const info = satData.get(name);
+  if (!info) return;
+
+  // find the marker entity
+  const marker = satMarkers.find((m) => m._worldviewSatId === name);
+  if (!marker) return;
+
+  // remember where the user was looking so deselect restores it
+  if (!satPrevCamera) {
+    satPrevCamera = {
+      destination: viewer.camera.positionWC.clone(),
+      orientation: {
+        heading: viewer.camera.heading,
+        pitch: viewer.camera.pitch,
+        roll: viewer.camera.roll,
+      },
+    };
+  }
+
+  // draw the orbital trail arc (-45m to +45m, 1-min steps) — on click only
+  const satrec = info.satrec;
+  if (satrec) {
+    const positions = [];
+    const nowMs = Date.now();
+    for (let m = -45; m <= 45; m++) {
+      const t = new Date(nowMs + m * 60000);
+      const pv = satellite.propagate(satrec, t);
+      if (!pv.position) continue;
+      const gd = satellite.eciToGeodetic(pv.position, satellite.gstime(t));
+      positions.push(Cesium.Cartesian3.fromRadians(gd.longitude, gd.latitude, gd.height * 1000.0));
+    }
+    if (positions.length >= 4) {
+      satTrailEntity = viewer.entities.add({
+        polyline: {
+          positions,
+          width: 1.5,
+          material: new Cesium.PolylineGlowMaterialProperty({
+            color: Cesium.Color.fromCssColorString("#c084fc").withAlpha(0.8),
+            glowPower: 0.2,
+          }),
+        },
+      });
+    }
+  }
+
+  // ground detection cone: from satellite down to its ground track.
+  // LIVE — position + length are CallbackProperties so the beam follows
+  // the satellite as it moves (it used to be static and stayed behind).
+  const cone = viewer.entities.add({
+    position: new Cesium.CallbackProperty((time) => {
+      const p = marker.position.getValue(time);
+      if (!p) return undefined;
+      const c = Cesium.Cartographic.fromCartesian(p);
+      return Cesium.Cartesian3.fromRadians(c.longitude, c.latitude, 0);
+    }, false),
+    cylinder: {
+      length: new Cesium.CallbackProperty((time) => {
+        const p = marker.position.getValue(time);
+        if (!p) return 0;
+        return Cesium.Cartographic.fromCartesian(p).height;
+      }, false),
+      topRadius: 0,
+      bottomRadius: new Cesium.CallbackProperty((time) => {
+        const p = marker.position.getValue(time);
+        if (!p) return 0;
+        return Cesium.Cartographic.fromCartesian(p).height * 0.35;
+      }, false),
+      material: Cesium.Color.fromCssColorString("#c084fc").withAlpha(0.25),
+      outline: true,
+      outlineColor: Cesium.Color.fromCssColorString("#c084fc").withAlpha(0.6),
+    },
+  });
+  satCones.push(cone);
+
+  // info card
+  document.getElementById("satInfoName").textContent = info.name;
+  document.getElementById("satInfoCat").textContent = info.catId;
+  document.getElementById("satInfoAlt").textContent = info.altKm.toFixed(0) + " km";
+  document.getElementById("satInfoVel").textContent = info.vel + " km/s";
+  document.getElementById("satInfoSensor").textContent = "EO / IR (est.)";
+  document.getElementById("satInfoStatus").textContent = "TRACKING";
+  document.getElementById("satInfoCard").style.display = "block";
+
+  // ground target (sub-satellite point) for the recon zoom
+  const pos = marker.position.getValue(Cesium.JulianDate.now());
+  const cart = Cesium.Cartographic.fromCartesian(pos);
+  const targetLat = Cesium.Math.toDegrees(cart.latitude);
+  const targetLon = Cesium.Math.toDegrees(cart.longitude);
+  document.getElementById("satInfoGround").textContent =
+    targetLat.toFixed(3) + ", " + targetLon.toFixed(3);
+
+  // fly the camera DIRECTLY to the satellite's position, looking down at its
+  // ground track — the satellite's own camera view. No intermediate hop, so
+  // the follow-camera locks on without a visible snap.
+  selectedSat = name;
+  viewer.camera.flyTo({
+    destination: pos,
+    orientation: {
+      heading: 0,
+      pitch: -Cesium.Math.PI_OVER_TWO + 0.2,   // looking down, slight tilt
+      roll: 0,
+    },
+    duration: 2.0,
+  });
+}
+
+/* ============================================================
+   Space-to-Ground Reconnaissance Zoom (v1.50)
+   Clicking a satellite flies the camera from orbit down to the
+   sub-satellite ground point at 800m, 65° tactical angle, with a
+   crosshair HUD. "Return to Orbit" flies back up to the sat.
+   ============================================================ */
+let reconActive = false;
+
+function startReconZoom() {
+  if (!selectedSat) return;
+  const marker = satMarkers.find((m) => m._worldviewSatId === selectedSat);
+  if (!marker) return;
+  const pos = marker.position.getValue(Cesium.JulianDate.now());
+  if (!pos) return;
+  const cart = Cesium.Cartographic.fromCartesian(pos);
+  const targetLat = Cesium.Math.toDegrees(cart.latitude);
+  const targetLon = Cesium.Math.toDegrees(cart.longitude);
+
+  // stop the follow-camera while we swoop down
+  reconActive = true;
+
+  // HUD values
+  document.getElementById("reconName").textContent = selectedSat;
+  const info = satData.get(selectedSat);
+  document.getElementById("reconCat").textContent = "NORAD " + (info ? info.catId : "—");
+  document.getElementById("reconLat").textContent = targetLat.toFixed(5);
+  document.getElementById("reconLon").textContent = targetLon.toFixed(5);
+  document.getElementById("reconAlt").textContent = "800 m";
+  document.getElementById("reconTile").style.display = "none";
+  document.getElementById("reconHud").style.display = "block";
+
+  // smooth high-speed flight from orbit down to street-level recon view
+  // pitch -28° (CRITICAL: tilts toward the horizon for 3D perspective)
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(targetLon, targetLat, 750.0),
+    orientation: {
+      heading: Cesium.Math.toRadians(viewer.camera.heading ? Cesium.Math.toDegrees(viewer.camera.heading) : 0.0),
+      pitch: Cesium.Math.toRadians(-28.0),   // tactical horizon tilt
+      roll: 0.0,
+    },
+    duration: 2.0,
+  });
+}
+
+function returnToOrbit() {
+  if (!selectedSat) return;
+  const marker = satMarkers.find((m) => m._worldviewSatId === selectedSat);
+  if (!marker) return;
+  const pos = marker.position.getValue(Cesium.JulianDate.now());
+  if (!pos) return;
+  reconActive = false;
+  document.getElementById("reconHud").style.display = "none";
+  viewer.camera.flyTo({
+    destination: pos,
+    orientation: {
+      heading: 0,
+      pitch: -Cesium.Math.PI_OVER_TWO + 0.2,
+      roll: 0,
+    },
+    duration: 2.0,
+  });
+}
+
+function captureReconTile() {
+  if (!selectedSat) return;
+  const marker = satMarkers.find((m) => m._worldviewSatId === selectedSat);
+  if (!marker) return;
+  const pos = marker.position.getValue(Cesium.JulianDate.now());
+  if (!pos) return;
+  const cart = Cesium.Cartographic.fromCartesian(pos);
+  const lat = Cesium.Math.toDegrees(cart.latitude);
+  const lon = Cesium.Math.toDegrees(cart.longitude);
+
+  // server-side proxy: fetches the Esri World Imagery tile for us so the
+  // browser never hits arcgisonline directly (referrer/CORS blocked the
+  // direct <img> URL — broken/blank tile). zoom 16 = street level.
+  const img = document.getElementById("reconTileImg");
+  img.src = "/api/satellite_snapshot?lat=" + lat.toFixed(5) + "&lon=" + lon.toFixed(5) + "&zoom=16";
+  img.onerror = function () {
+    // fallback: zoom 15 tile for the same point
+    img.src = "/api/satellite_snapshot?lat=" + lat.toFixed(5) + "&lon=" + lon.toFixed(5) + "&zoom=15";
+  };
+  document.getElementById("reconTile").style.display = "block";
+}
+
+// wire the recon buttons
+document.getElementById("satReconBtn").addEventListener("click", startReconZoom);
+document.getElementById("satOrbitBtn").addEventListener("click", returnToOrbit);
+document.getElementById("reconCapture").addEventListener("click", captureReconTile);
+document.getElementById("reconExit").addEventListener("click", () => {
+  reconActive = false;
+  document.getElementById("reconHud").style.display = "none";
+});
+
+document.getElementById("satInfoClose").addEventListener("click", () => selectSatellite(null));
+
+/* ============================================================
+   Camera Traffic Simulator (v1.2)
+   "Simulate Traffic" toggle: periodically spawns glowing car
+   markers at active camera coordinates and animates them along
+   the real road geometry at the road's speed limit.
+   ============================================================ */
+// ============================================================
+//   Traffic Simulator v2 — PARTICLE SYSTEM
+//   (Bilawal's approach: OSM vehicle flow rendered as a particle
+//   system — ONE PointPrimitiveCollection = ONE draw call for
+//   ALL cars, GPU-batched. No per-car entities, no per-car
+//   SampledPositionProperty. Cars advance along the real road
+//   geometry at the road's speed limit, updated per frame.)
+//   ============================================================ */
+const trafficParticles = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+const trafficParticleCars = [];   // { point, pts, cum, total, dist, speed }
+const trafficRoadCache = {};      // cam_id -> road path
+let trafficTimer = null;
+let trafficSpawnIdx = 0;
+let _lastTrafficTick = 0;
+
+function getTrafficCameras() {
+  // cameras to spawn cars at: custom cams + a sample of NYC/NC cams
+  const cams = [];
+  if (window.camById) {
+    for (const id in window.camById) {
+      const c = window.camById[id].data;
+      if (c && c.type !== "Flock ALPR") cams.push(c);
+    }
+  }
+  return cams;
+}
+
+async function spawnTrafficCar() {
+  const cams = getTrafficCameras();
+  if (!cams.length) return;
+  // round-robin through cameras
+  const cam = cams[trafficSpawnIdx % cams.length];
+  trafficSpawnIdx++;
+
+  // fetch road path (cached server-side 30 min, client-side too)
+  let path = trafficRoadCache[cam.id];
+  if (!path) {
+    try {
+      const r = await fetch("/api/road_path?cam_id=" + encodeURIComponent(cam.id));
+      path = await r.json();
+      if (path.error) return;
+      trafficRoadCache[cam.id] = path;
+    } catch (e) { return; }
+  }
+  if (!path || !path.waypoints || path.waypoints.length < 2) return;
+
+  // cumulative distance along the path (for per-frame interpolation)
+  const pts = path.waypoints;
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) {
+    cum.push(cum[i - 1] + (pts[i].distanceMeters || 0));
+  }
+  const total = cum[cum.length - 1];
+  if (total <= 0) return;
+  const speed = path.speedMetersPerSec || 11.2;
+
+  // ONE point in the shared collection — the particle system
+  const colors = [Cesium.Color.YELLOW, Cesium.Color.WHITE, Cesium.Color.ORANGE];
+  const point = trafficParticles.add({
+    position: Cesium.Cartesian3.fromDegrees(pts[0].lon, pts[0].lat, 2.0),
+    pixelSize: 7,
+    color: colors[trafficSpawnIdx % colors.length],
+    outlineColor: Cesium.Color.BLACK,
+    outlineWidth: 1,
+    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+  });
+  trafficParticleCars.push({ point, pts, cum, total, dist: 0, speed });
+
+  // cap active cars — the particle system is cheap, but keep it sane
+  if (trafficParticleCars.length > 120) {
+    const old = trafficParticleCars.shift();
+    trafficParticles.remove(old.point);
+  }
+}
+
+function updateTrafficVehicles(clock) {
+  // advance every car along its road at speed-limit pace, per frame
+  const now = performance.now();
+  const dt = Math.min((now - _lastTrafficTick) / 1000, 0.1);
+  _lastTrafficTick = now;
+  if (!trafficParticleCars.length) return;
+  for (let i = trafficParticleCars.length - 1; i >= 0; i--) {
+    const car = trafficParticleCars[i];
+    car.dist += car.speed * dt;
+    if (car.dist >= car.total) {
+      // arrived — remove from the collection
+      trafficParticles.remove(car.point);
+      trafficParticleCars.splice(i, 1);
+      continue;
+    }
+    // find the segment and interpolate lon/lat
+    const cum = car.cum;
+    let j = 1;
+    while (j < cum.length - 1 && cum[j] < car.dist) j++;
+    const segLen = (cum[j] - cum[j - 1]) || 1;
+    const t = (car.dist - cum[j - 1]) / segLen;
+    const a = car.pts[j - 1], b = car.pts[j];
+    car.point.position = Cesium.Cartesian3.fromDegrees(
+      a.lon + (b.lon - a.lon) * t,
+      a.lat + (b.lat - a.lat) * t,
+      2.0
+    );
+  }
+}
+
+function startTrafficSim() {
+  if (trafficTimer) return;
+  _lastTrafficTick = performance.now();
+  spawnTrafficCar();
+  trafficTimer = setInterval(spawnTrafficCar, 2000);   // denser: every 2s
+}
+
+function stopTrafficSim() {
+  if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
+  trafficParticles.removeAll();
+  trafficParticleCars.length = 0;
+}
+
+// Force clock animation and scene request render on tick — vehicles keep
+// moving smoothly even when the scene would otherwise pause rendering
+// (requestRenderMode) or the camera is idle.
+viewer.clock.shouldAnimate = true;
+viewer.clock.onTick.addEventListener(function (clock) {
+  updateTrafficVehicles(clock);
+  if (viewer.scene.requestRenderMode) {
+    viewer.scene.requestRender(); // Ensures vehicles re-render smoothly every frame
+  }
+});
+
+function wireTrafficToggle() {
+  const el = document.getElementById("toggleTraffic");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    if (el.checked) startTrafficSim();
+    else stopTrafficSim();
+  });
+}
+
+/* ============================================================
+   Live Maritime / AIS ship layer
+   ============================================================ */
+const shipDataSource = new Cesium.CustomDataSource("ships");
+viewer.dataSources.add(shipDataSource);
+const shipEntities = new Map();   // mmsi -> entity
+window.shipEntities = shipEntities;   // debug/test access
+const shipTails = new Map();      // mmsi -> [Cartesian3]
+let shipLayerReady = false;
+let shipPollTimer = null;
+let selectedShip = null;
+
+// ============ Far-side occlusion (ships must NOT x-ray through the globe) ============
+// The photoreal tileset hides the globe (globe.show=false), so there is NO
+// far-side depth geometry to test against — with disableDepthTestDistance=
+// Infinity, far-side ships rendered straight through the planet. Fix: pure
+// camera math (EllipsoidalOccluder) — any ship beyond the horizon is hidden.
+// Near-side ships KEEP the depth-test bypass so ocean tiles never submerge
+// or clip their icons (the original reason for the Infinity flag).
+const _shipOccluder = new Cesium.EllipsoidalOccluder(Cesium.Ellipsoid.WGS84, Cesium.Cartesian3.ZERO);
+let _shipOccluderCamPos = new Cesium.Cartesian3();
+let _shipOccluderDirty = true;   // set when new ships arrive or layer toggles
+
+let _shipOccluderLast = 0;       // last occlusion pass (ms)
+
+function updateShipOcclusion() {
+  // TIME throttle (250ms), not distance: during camera movement the horizon
+  // changes every frame — a distance threshold let far-side ships stay
+  // x-rayed through the globe until the camera crossed it, then they popped
+  // out ("ships show through, then disappear"). 4Hz is cheap (dot products)
+  // and hides far-side ships within a quarter second of the horizon moving.
+  const nowMs = performance.now();
+  if (!_shipOccluderDirty && nowMs - _shipOccluderLast < 250) return;
+  _shipOccluderDirty = false;
+  _shipOccluderLast = nowMs;
+  const camPos = viewer.camera.positionWC;
+  _shipOccluder.cameraPosition = camPos;
+  const t = viewer.clock.currentTime;
+  for (const ent of shipEntities.values()) {
+    const pos = ent._shipPosProp.getValue(t);
+    if (!pos) { ent.show = false; continue; }
+    ent.show = layerState.ships && _shipOccluder.isPointVisible(pos);
+  }
+}
+viewer.scene.postUpdate.addEventListener(updateShipOcclusion);
+
+// ============ Inline canvas ship icon (no 404s, always renders) ============
+// Data-URI canvas icon — no PNG fetch, no missing-file risk. Neon green
+// arrow/ship shape with glow, per spec. Generated once at load.
+function makeShipIconDataUrl() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 48;
+  canvas.height = 48;
+  const ctx = canvas.getContext("2d");
+
+  // glowing neon green arrow/ship shape
+  ctx.fillStyle = "#00FF66";
+  ctx.shadowColor = "#00FF66";
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(24, 4);
+  ctx.lineTo(40, 44);
+  ctx.lineTo(24, 34);
+  ctx.lineTo(8, 44);
+  ctx.closePath();
+  ctx.fill();
+  // bright core
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#baffd4";
+  ctx.beginPath();
+  ctx.moveTo(24, 10);
+  ctx.lineTo(34, 40);
+  ctx.lineTo(24, 32);
+  ctx.lineTo(14, 40);
+  ctx.closePath();
+  ctx.fill();
+
+  return canvas.toDataURL();
+}
+const greenShipIconDataUrl = makeShipIconDataUrl();
+
+function getShipIcon(type) {
+  // inline data-URI icon — guaranteed to render, no network fetch
+  return greenShipIconDataUrl;
+}
+
+function shipColor(type) {
+  if (type === "Cargo") return Cesium.Color.fromCssColorString("#38bdf8");
+  if (type === "Tanker") return Cesium.Color.fromCssColorString("#ff5a3c");
+  if (type === "Military") return Cesium.Color.fromCssColorString("#ffc828");
+  if (type === "Passenger") return Cesium.Color.fromCssColorString("#00dc78");
+  return Cesium.Color.fromCssColorString("#dce1e6");
+}
+
+async function loadShips() {
+  try {
+    const d = await api("/api/ships");
+    const ships = d.ships || [];
+    const seen = new Set();
+    // CHUNKED CREATION (PERF): 15K ships created in one synchronous loop
+    // froze the main thread for seconds ("lagging till it stalls"). Process
+    // 500 per frame — the app stays interactive, ships stream in over ~2s.
+    let idx = 0;
+    const CHUNK = 500;
+    function processChunk() {
+      const end = Math.min(idx + CHUNK, ships.length);
+      for (; idx < end; idx++) {
+        const s = ships[idx];
+        seen.add(s.mmsi);
+        let ent = shipEntities.get(s.mmsi);
+        if (!ent) {
+          ent = shipDataSource.entities.add({
+            // 10m above the ellipsoid — visually "on the water" at any zoom
+            // (same as cameras), but clears the depth buffer so the globe
+            // occludes it (no see-through) AND pick() can hit it (no z-fight)
+            position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10),
+            billboard: {
+              image: getShipIcon(s.type),
+              rotation: Cesium.Math.toRadians(-s.cog),
+              alignedAxis: Cesium.Cartesian3.ZERO,
+              // GEMINI GOLDEN GOOSE spec: scale 0.6, NearFarScalar(1.0e3, 0.6, 2.5e6, 0.04)
+              scale: 0.7,
+              scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.8, 2.5e6, 0.08),
+              eyeOffset: new Cesium.Cartesian3(0, 0, 50),
+              // v2.0 spec: disableDepthTestDistance=POSITIVE_INFINITY so
+              // ocean tiles never submerge or clip vessel icons. NOTE: this
+              // re-enables far-side x-ray at global zoom (documented tradeoff
+              // in AGENT_BOARD.md — the old code omitted it to occlude ships
+              // behind the planet; spec wins, ships stay visible everywhere).
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              heightReference: Cesium.HeightReference.NONE,
+              verticalOrigin: Cesium.VerticalOrigin.CENTER,
+              // GEMINI GOLDEN GOOSE spec: ships cull beyond 2,500 km
+              // (far side of Earth = 12,700 km away → no x-ray possible)
+              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 2500000.0),
+            },
+            label: {
+              text: s.name.slice(0, 16),
+              font: "11px Cascadia Code, Consolas, monospace",
+              fillColor: Cesium.Color.fromCssColorString("#7dd3fc"),
+              outlineColor: Cesium.Color.fromCssColorString("#000000"),
+              outlineWidth: 3,
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              pixelOffset: new Cesium.Cartesian2(0, -22),
+              // PERF: labels only within 300km (was 900km — 16K labels at
+              // global zoom was a huge text-render cost)
+              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 300000),
+            },
+          });
+          ent._worldviewShip = s.mmsi;
+          ent._worldviewShipData = s;   // full record for the click card
+          // smooth movement: SampledPositionProperty interpolates between polls
+          ent._shipPosProp = new Cesium.SampledPositionProperty();
+          ent.position = ent._shipPosProp;
+          shipEntities.set(s.mmsi, ent);
+          shipTails.set(s.mmsi, []);
+        }
+        // smooth continuous movement: sample now + a projected sample 60s ahead
+        // (at sog along cog) so Cesium glides the ship between polls
+        const now = Cesium.JulianDate.now();
+        const speedMs = (s.sog || 0) * 0.514444;          // knots -> m/s
+        const cogRad = Cesium.Math.toRadians(s.cog || 0);
+        const dt = 60;
+        const dist = speedMs * dt;
+        const dLat = (dist * Math.cos(cogRad)) / 111320;
+        // CRITICAL: clamp the latitude in the cos() denominator — near the
+        // poles cos(lat) -> 0 and dLon explodes to Infinity, which made
+        // fromDegrees() throw and killed the WHOLE loadShips() loop after the
+        // first few ships (the "only 2-3 ships visible" bug).
+        const latClamped = Math.max(-85, Math.min(85, s.lat));
+        const dLon = (dist * Math.sin(cogRad)) / (111320 * Math.cos(Cesium.Math.toRadians(latClamped)));
+        // clamp the projected position to valid ranges
+        const projLon = Math.max(-180, Math.min(180, s.lon + dLon));
+        const projLat = Math.max(-90, Math.min(90, s.lat + dLat));
+        ent._shipPosProp.addSample(now, Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10));
+        ent._shipPosProp.addSample(
+          Cesium.JulianDate.addSeconds(now, dt, new Cesium.JulianDate()),
+          Cesium.Cartesian3.fromDegrees(projLon, projLat, 10)
+        );
+        ent.billboard.rotation = Cesium.Math.toRadians(-s.cog);
+        ent._worldviewShipData = s;
+        // tail: keep last ~20 points (where the ship came from) — always shown
+        // like plane tails, glowing cyan, with depth-fail so it stays visible
+        const tail = shipTails.get(s.mmsi);
+        tail.push(Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10));
+        if (tail.length > 20) tail.shift();
+        // PERF: only draw a tail for ships that are actually MOVING (sog > 0.5
+        // kn) — anchored ships (~40% of 15K) don't need a polyline
+        if (tail.length >= 2 && (s.sog || 0) > 0.5) {
+          if (!ent.polyline) {
+            ent.polyline = {
+              positions: new Cesium.CallbackProperty(() => tail, false),
+              width: 1.4,
+              // PERF: plain color (glow shaders on 15K ship tails stalled the
+              // render loop)
+              material: new Cesium.ColorMaterialProperty(
+                Cesium.Color.fromCssColorString("#38bdf8").withAlpha(0.7)
+              ),
+              depthFailMaterial: new Cesium.ColorMaterialProperty(
+                Cesium.Color.fromCssColorString("#38bdf8").withAlpha(0.3)
+              ),
+              // PERF: cull the tail beyond 8,000 km
+              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 8000000.0),
+            };
+          }
+        }
+        ent.show = layerState.ships;
+      }
+      if (idx < ships.length) {
+        setTimeout(processChunk, 0);   // yield to the renderer between chunks
+      } else {
+        // remove ships that disappeared
+        for (const [mmsi, ent] of shipEntities) {
+          if (!seen.has(mmsi)) {
+            shipDataSource.entities.remove(ent);
+            shipEntities.delete(mmsi);
+            shipTails.delete(mmsi);
+          }
+        }
+        shipLayerReady = true;
+        _shipOccluderDirty = true;   // new ships arrived — re-occlude now
+        const sc = document.getElementById("shipCount");
+        if (sc) sc.textContent = shipEntities.size;
+      }
+    }
+    processChunk();
+  } catch (e) {
+    console.log("[worldview] ship layer failed:", e.message);
+  }
+}
+
+function wireShipToggle() {
+  const el = document.getElementById("toggleShips");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    layerState.ships = el.checked;
+    _shipOccluderDirty = true;   // re-occlude on toggle (show/hide far side)
+    for (const ent of shipEntities.values()) ent.show = el.checked;
+  });
+}
+
+// ship info card
+function showShipCard(ship) {
+  let card = document.getElementById("shipCard");
+  if (!card) {
+    card = document.createElement("div");
+    card.id = "shipCard";
+    card.style.cssText =
+      "position:fixed;right:16px;bottom:52px;z-index:300;display:none;" +
+      "width:300px;background:rgba(13,18,28,0.95);border:1px solid #38bdf8;" +
+      "border-radius:8px;padding:12px 14px;font-family:Consolas,monospace;" +
+      "font-size:12px;color:#d7e1ec;box-shadow:0 8px 24px rgba(0,0,0,0.5);";
+    card.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+      '  <div style="font-weight:700;color:#38bdf8;letter-spacing:1px;">🚢 MARITIME</div>' +
+      '  <button id="shipClose" style="background:none;border:none;color:#7c8ba0;font-size:16px;cursor:pointer;">✕</button>' +
+      "</div>" +
+      '<div id="shipName" style="font-size:13px;font-weight:700;color:#fff;"></div>' +
+      '<div id="shipMeta" style="color:#7c8ba0;font-size:10px;margin:2px 0 8px;"></div>' +
+      '<div id="shipRows"></div>';
+    document.body.appendChild(card);
+    card.querySelector("#shipClose").addEventListener("click", () => { card.style.display = "none"; selectedShip = null; });
+  }
+  document.getElementById("shipName").textContent = ship.name;
+  document.getElementById("shipMeta").textContent = "MMSI " + ship.mmsi + " · " + ship.type + (ship.flag ? " · " + ship.flag : "");
+  const rows = [
+    ["Speed", ship.sog.toFixed(1) + " kn"],
+    ["Course", ship.cog.toFixed(0) + "°"],
+    ["Heading", ship.heading.toFixed(0) + "°"],
+    ["Destination", ship.destination || "—"],
+    ["Dimensions", ship.length ? ship.length + "×" + ship.width + " m" : "—"],
+  ];
+  document.getElementById("shipRows").innerHTML = rows.map(([k, v]) =>
+    '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(31,42,58,0.5);">' +
+    '<span style="color:#7c8ba0;font-size:10px;text-transform:uppercase;">' + k + "</span>" +
+    '<span style="color:#38bdf8;">' + v + "</span></div>"
+  ).join("");
+  card.style.display = "block";
+  selectedShip = ship.mmsi;
+}
+
+function wireShipClicks() {
+  // ships are picked in the SINGLE click handler via _worldviewShip
+  // (index.html owns LEFT_CLICK; we just expose the card opener)
+  window.openShipCard = function (mmsi) {
+    // find the ship data from the last load
+    const ent = shipEntities.get(mmsi);
+    if (!ent) return;
+    const pos = ent.position.getValue(Cesium.JulianDate.now());
+    const c = Cesium.Cartographic.fromCartesian(pos);
+    // use the full live record stored on the entity (real speed/course/dest)
+    const s = ent._worldviewShipData || {};
+    showShipCard({
+      mmsi,
+      name: s.name || (ent.label ? String(ent.label.text.getValue(Cesium.JulianDate.now())) : mmsi),
+      type: s.type || "Other",
+      lat: Cesium.Math.toDegrees(c.latitude),
+      lon: Cesium.Math.toDegrees(c.longitude),
+      sog: s.sog || 0,
+      cog: s.cog || 0,
+      heading: s.heading || 0,
+      destination: s.destination || "",
+      flag: s.flag || "",
+      length: s.length || 0,
+      width: s.width || 0,
+    });
+  };
+  window.closeShipCard = function () {
+    const card = document.getElementById("shipCard");
+    if (card) card.style.display = "none";
+    selectedShip = null;
+  };
+}
+function applyLayerToggles() {
+  for (const [icao, ent] of entities) {
+    const f = flights.get(icao);
+    if (!f) continue;
+    const show = layerState.flights && (f.military ? layerState.military : true) && matches(f);
+    ent.show = show;
+    const t = trajEntities.get(icao);
+    if (t) t.show = show;
+  }
+  for (const ent of satelliteEntities) {
+    ent.show = layerState.satellites;
+  }
+  updateCount();
+}
+
+function wireLayerToggles() {
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("change", () => {
+      layerState[key] = el.checked;
+      applyLayerToggles();
+    });
+  };
+  bind("toggleFlights", "flights");
+  bind("toggleMilitary", "military");
+  bind("toggleSatellites", "satellites");
+  bind("toggleJamming", "jamming");
+  bind("toggleRestricted", "restricted");
+  wireTrafficToggle();
+}
+
+/* ============================================================
+   Playback bar (4D time controls)
+   ============================================================ */
+function wirePlayback() {
+  const btnPlay = document.getElementById("btnPlay");
+  const speedSel = document.getElementById("speedSel");
+  const scrubber = document.getElementById("scrubber");
+  const utcClock = document.getElementById("utcClock");
+
+  btnPlay.addEventListener("click", () => {
+    playbackPlaying = !playbackPlaying;
+    btnPlay.textContent = playbackPlaying ? "▶" : "⏸";
+  });
+  speedSel.addEventListener("change", () => {
+    playbackSpeed = parseFloat(speedSel.value) || 1;
+  });
+  scrubber.addEventListener("input", () => {
+    // scrub through the trajectory buffer: 0 = oldest, 100 = live
+    const frac = (100 - parseInt(scrubber.value, 10)) / 100;
+    playbackOffset = frac * TRAJ_WINDOW_SEC;
+  });
+
+  // UTC clock + live scrubber drift
+  setInterval(() => {
+    const now = new Date();
+    const utc = now.toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    utcClock.textContent = utc;
+    if (playbackPlaying && playbackOffset > 0) {
+      playbackOffset = Math.max(0, playbackOffset - playbackSpeed);
+      scrubber.value = 100 - (playbackOffset / TRAJ_WINDOW_SEC) * 100;
+    }
+  }, 1000);
+}
+
+/* ============================================================
+   Historical Playback Engine (SQLite telemetry)
+   ● LIVE | ▶ PLAYBACK toggle: in playback mode the scrubber
+   queries /api/playback for the snapshot nearest the chosen
+   timestamp and swaps entity positions to the historical state.
+   ============================================================ */
+let playbackMode = false;          // false = LIVE, true = PLAYBACK
+let playbackRange = null;         // {min, max, count} from /api/playback/range
+let playbackStates = null;        // last fetched historical snapshot
+let playbackFetching = false;
+// expose for debugging / agent bus
+window.playbackRange = playbackRange;
+window.playbackStates = playbackStates;
+
+async function refreshPlaybackRange() {
+  try {
+    const r = await api("/api/playback/range");
+    if (r && r.min) {
+      playbackRange = r;
+      window.playbackRange = r;
+    }
+  } catch (e) { /* server may not have data yet */ }
+}
+
+async function fetchPlaybackAt(isoTs) {
+  if (playbackFetching) return;
+  playbackFetching = true;
+  try {
+    const r = await fetch("/api/playback?timestamp=" + encodeURIComponent(isoTs));
+    const d = await r.json();
+    if (d && d.states) {
+      playbackStates = d;
+      window.playbackStates = d;
+      applyPlaybackStates(d.states);
+    }
+  } catch (e) {
+    console.log("[worldview] playback fetch failed:", e.message);
+  }
+  playbackFetching = false;
+}
+
+function applyPlaybackStates(states) {
+  // planes: move existing entities to historical positions
+  const planes = new Map();
+  for (const s of states) if (s.type === "plane") planes.set(s.id, s);
+  for (const [icao, ent] of entities) {
+    const s = planes.get(icao);
+    if (s) {
+      ent.position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, Math.max(s.alt || 0, 500));
+      ent.billboard.rotation = Cesium.Math.toRadians(-(s.heading || 0));
+      ent.show = true;
+    } else {
+      ent.show = false;   // not in this snapshot
+    }
+  }
+  // ships: same for the ship data source
+  const ships = new Map();
+  for (const s of states) if (s.type === "ship") ships.set(s.id, s);
+  for (const [mmsi, ent] of shipEntities) {
+    const s = ships.get(mmsi);
+    if (s) {
+      ent.position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10);
+      ent.billboard.rotation = Cesium.Math.toRadians(-(s.heading || 0));
+      ent.show = true;
+    } else {
+      ent.show = false;
+    }
+  }
+  // fires: show only fires present in the snapshot
+  const fireKeys = new Set();
+  for (const s of states) if (s.type === "fire") fireKeys.add(s.id);
+  for (const [key, ent] of fireEntities) {
+    ent.show = fireKeys.has(key);
+  }
+}
+
+function setPlaybackMode(on) {
+  playbackMode = on;
+  const liveBtn = document.getElementById("modeLive");
+  const pbBtn = document.getElementById("modePlayback");
+  if (on) {
+    liveBtn.style.background = "rgba(0,255,157,0.05)";
+    liveBtn.style.borderColor = "rgba(0,255,157,0.3)";
+    liveBtn.style.color = "#4a5a6a";
+    pbBtn.style.background = "rgba(56,189,248,0.2)";
+    pbBtn.style.borderColor = "#38bdf8";
+    pbBtn.style.color = "#38bdf8";
+    document.getElementById("liveBadge").innerHTML = '<span class="dot" style="background:#38bdf8;"></span>PLAYBACK';
+    refreshPlaybackRange().then(() => {
+      if (playbackRange && playbackRange.max) {
+        // scrubber: 0 = earliest, 100 = latest
+        const scr = document.getElementById("scrubber");
+        scr.min = 0;
+        scr.max = 100;
+        scr.value = 100;
+        fetchPlaybackAt(playbackRange.max);
+      }
+    });
+  } else {
+    liveBtn.style.background = "rgba(0,255,157,0.15)";
+    liveBtn.style.borderColor = "#00ff9d";
+    liveBtn.style.color = "#00ff9d";
+    pbBtn.style.background = "rgba(56,189,248,0.1)";
+    pbBtn.style.borderColor = "rgba(56,189,248,0.4)";
+    pbBtn.style.color = "#7dd3fc";
+    document.getElementById("liveBadge").innerHTML = '<span class="dot"></span>LIVE&nbsp;ADS-B';
+    // restore live: show everything again
+    for (const [icao, ent] of entities) ent.show = layerState.flights && (flights.get(icao) ? (flights.get(icao).military ? layerState.military : true) : true);
+    for (const [mmsi, ent] of shipEntities) ent.show = layerState.ships;
+    for (const [key, ent] of fireEntities) ent.show = layerState.fires;
+  }
+}
+
+function wireModeToggle() {
+  document.getElementById("modeLive").addEventListener("click", () => setPlaybackMode(false));
+  document.getElementById("modePlayback").addEventListener("click", () => setPlaybackMode(true));
+  // scrubber in playback mode -> fetch historical snapshot
+  const scr = document.getElementById("scrubber");
+  scr.addEventListener("input", () => {
+    if (!playbackMode || !playbackRange) return;
+    const frac = parseInt(scr.value, 10) / 100;
+    const minT = new Date(playbackRange.min.replace(" ", "T") + "Z").getTime();
+    const maxT = new Date(playbackRange.max.replace(" ", "T") + "Z").getTime();
+    const t = minT + frac * (maxT - minT);
+    const iso = new Date(t).toISOString().slice(0, 19).replace("T", " ");
+    fetchPlaybackAt(iso);
+  });
+}
+
+/* ============================================================
+   3D Buildings layer (OSM Overpass — free, no key)
+   Real extruded building footprints with heights near the camera.
+   Loads when zoomed in (camera height < 12km), refreshes on move.
+   ============================================================ */
+let buildingsDataSource = null;
+let buildingsLoaded = false;
+let buildingsLastKey = "";
+let buildingsTimer = null;
+
+function getBuildingsDataSource() {
+  if (!buildingsDataSource) {
+    buildingsDataSource = new Cesium.CustomDataSource("buildings3d");
+    viewer.dataSources.add(buildingsDataSource);
+  }
+  return buildingsDataSource;
+}
+
+async function loadBuildingsNear(lat, lon) {
+  if (!layerState.buildings) return;
+  const key = lat.toFixed(3) + "," + lon.toFixed(3);
+  if (key === buildingsLastKey) return;
+  buildingsLastKey = key;
+  try {
+    const d = await api("/api/buildings?lat=" + lat.toFixed(5) + "&lon=" + lon.toFixed(5) + "&radius=600");
+    const list = d.buildings || [];
+    const ds = getBuildingsDataSource();
+    ds.entities.removeAll();
+    for (const b of list) {
+      const ring = b.ring.map((p) => Cesium.Cartesian3.fromDegrees(p[1], p[0], 0));
+      if (ring.length < 3) continue;
+      ds.entities.add({
+        name: b.name || "building",
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(ring),
+          extrudedHeight: b.height,
+          material: Cesium.Color.fromCssColorString("#8a8f98").withAlpha(0.9),
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString("#3a3f4a"),
+          height: 0,
+        },
+      });
+    }
+    buildingsLoaded = true;
+  } catch (e) {
+    console.log("[worldview] buildings failed:", e.message);
+  }
+}
+
+function wireBuildingsToggle() {
+  const el = document.getElementById("toggleBuildings");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    layerState.buildings = el.checked;
+    if (el.checked) {
+      const cam = viewer.camera.positionCartographic;
+      loadBuildingsNear(Cesium.Math.toDegrees(cam.latitude), Cesium.Math.toDegrees(cam.longitude));
+    } else if (buildingsDataSource) {
+      buildingsDataSource.entities.removeAll();
+    }
+  });
+}
+
+// camera-driven: load buildings when zoomed in, refresh on move (throttled)
+viewer.camera.changed.addEventListener(() => {
+  if (!layerState.buildings) return;
+  const cam = viewer.camera.positionCartographic;
+  const h = cam.height;
+  if (h > 12000) {
+    if (buildingsDataSource) buildingsDataSource.entities.removeAll();
+    buildingsLastKey = "";
+    return;
+  }
+  if (buildingsTimer) clearTimeout(buildingsTimer);
+  buildingsTimer = setTimeout(() => {
+    loadBuildingsNear(Cesium.Math.toDegrees(cam.latitude), Cesium.Math.toDegrees(cam.longitude));
+  }, 400);
+});
+
+/* ============================================================
+   Street Name Labels (OSM Overpass — free, no key)
+   The photoreal 3D tiles have NO labels — draw floating street
+   names over them, camera-driven (loads when zoomed in).
+   ============================================================ */
+let streetsDataSource = null;
+let streetsLastKey = "";
+let streetsTimer = null;
+
+function getStreetsDataSource() {
+  if (!streetsDataSource) {
+    streetsDataSource = new Cesium.CustomDataSource("streetnames");
+    viewer.dataSources.add(streetsDataSource);
+  }
+  return streetsDataSource;
+}
+
+async function loadStreetNamesNear(lat, lon) {
+  const key = lat.toFixed(3) + "," + lon.toFixed(3);
+  if (key === streetsLastKey) return;
+  streetsLastKey = key;
+  try {
+    const d = await api("/api/street_names?lat=" + lat.toFixed(5) + "&lon=" + lon.toFixed(5) + "&radius=800");
+    const list = d.streets || [];
+    const ds = getStreetsDataSource();
+    ds.entities.removeAll();
+    for (const s of list) {
+      if (s.line.length < 2) continue;
+      // label at the midpoint of the road, floating above it
+      const mid = s.line[Math.floor(s.line.length / 2)];
+      const color = s.rank >= 5 ? "#ffcc00" : s.rank >= 3 ? "#ffffff" : "#9aa4b2";
+      const size = s.rank >= 5 ? 15 : s.rank >= 3 ? 13 : 11;
+      ds.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(mid[1], mid[0], 40),
+        label: {
+          text: s.name,
+          font: size + "px Consolas, monospace",
+          fillColor: Cesium.Color.fromCssColorString(color),
+          outlineColor: Cesium.Color.fromCssColorString("#0c1017"),
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(0, 0),
+          // LIMITED depth bypass (10km): no clipping into buildings, but the
+          // Earth still occludes far-side labels
+          disableDepthTestDistance: 10000.0,
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 6000),
+        },
+      });
+    }
+  } catch (e) {
+    console.log("[worldview] street names failed:", e.message);
+  }
+}
+
+// camera-driven: load street names when zoomed in, refresh on move (throttled)
+viewer.camera.changed.addEventListener(() => {
+  const cam = viewer.camera.positionCartographic;
+  const h = cam.height;
+  if (h > 6000) {
+    if (streetsDataSource) streetsDataSource.entities.removeAll();
+    streetsLastKey = "";
+    return;
+  }
+  if (streetsTimer) clearTimeout(streetsTimer);
+  streetsTimer = setTimeout(() => {
+    loadStreetNamesNear(Cesium.Math.toDegrees(cam.latitude), Cesium.Math.toDegrees(cam.longitude));
+  }, 400);
+});
+
+/* ============================================================
+   Boot
+   ============================================================ */
+(async function boot() {
+  updateStatus("Connecting to OpenSky Network…");
+  buildAirlines();
+  wireLayerToggles();
+  wirePlayback();
+  wireModeToggle();
+  wireBuildingsToggle();
+  wireWwwPanel();
+  // LOD boot order (zoom-based loading, per Boo):
+  // 1) ships first (they're the ocean layer, visible from global zoom)
+  // 2) satellites next (orbit markers, visible from global zoom)
+  // 3) planes keep loading in the background (they render at lower camera
+  //    views — their labels/tails are distance-culled anyway)
+  // 4) cameras only show at street level (applyAltitudeShow in cameras.js)
+  loadShips();
+  loadSatellites();
+  loadFires();
+  loadHurricanes();
+  loadConflictZones();
+  loadHotspots();
+  focusHotZone(true);   // fly to the hottest war spot on load
+  initAddressSearch();
+  await poll();
+  pollTimer = setInterval(poll, POLL_MS);
+  setInterval(() => {
+    if (selectedIcao && flights.has(selectedIcao)) renderSidebar(flights.get(selectedIcao));
+  }, 5000);
+  // v2.0 spec: live entity counts in the top-right glassmorphic HUD
+  setInterval(updateHudCounts, 2000);
+})();
+
+/* ============================================================
+   Address search + bookmarks (Nominatim geocoding, localStorage)
+   ============================================================ */
+let searchPinEntity = null;
+let lastSearch = null;   // {name, lat, lon}
+
+function initAddressSearch() {
+  // merged single search bar: typing filters flights, Enter geocodes + flies
+  const input = document.getElementById("searchBox");
+  const starBtn = document.getElementById("addrBookmark");
+  const chipsBox = document.getElementById("addrBookmarks");
+
+  function addSearchPinEntity(lon, lat, name) {
+    if (searchPinEntity) viewer.entities.remove(searchPinEntity);
+    searchPinEntity = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, 50),
+      point: { pixelSize: 12, color: Cesium.Color.fromCssColorString("#ff3366"), outlineColor: Cesium.Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+      label: {
+        text: name || "Location",
+        font: "11px Consolas, monospace",
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(0, -18),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+  }
+
+  function flyToAddress(query) {
+    if (!query || !query.trim()) return;
+    fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(query.trim()))
+      .then(r => r.json())
+      .then(data => {
+        if (!data || data.length === 0) return;
+        const lat = parseFloat(data[0].lat);
+        const lon = parseFloat(data[0].lon);
+        const name = data[0].display_name || query;
+        lastSearch = { name, lat, lon };
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat, 1000),
+          orientation: { heading: 0, pitch: Cesium.Math.toRadians(-25.0), roll: 0 },
+          duration: 2.0,
+        });
+        addSearchPinEntity(lon, lat, name.split(",")[0]);
+      })
+      .catch(() => {});
+  }
+
+  function renderBookmarks() {
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem("worldview_bookmarks") || "[]"); } catch (e) {}
+    chipsBox.innerHTML = "";
+    saved.forEach((b, i) => {
+      const chip = document.createElement("button");
+      chip.className = "addr-chip";
+      chip.innerHTML = "⭐ " + b.name + ' <span class="chip-x" title="Remove">✕</span>';
+      chip.addEventListener("click", (ev) => {
+        if (ev.target.classList.contains("chip-x")) {
+          saved.splice(i, 1);
+          localStorage.setItem("worldview_bookmarks", JSON.stringify(saved));
+          renderBookmarks();
+          return;
+        }
+        viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(b.lon, b.lat, 1000), orientation: { heading: 0, pitch: Cesium.Math.toRadians(-25.0), roll: 0 }, duration: 2.0 });
+        addSearchPinEntity(b.lon, b.lat, b.name);
+      });
+      chipsBox.appendChild(chip);
+    });
+  }
+
+  function saveBookmark() {
+    if (!lastSearch) return;
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem("worldview_bookmarks") || "[]"); } catch (e) {}
+    const short = lastSearch.name.split(",")[0].trim();
+    if (!saved.some(b => b.name === short)) {
+      saved.push({ name: short, lat: lastSearch.lat, lon: lastSearch.lon });
+      localStorage.setItem("worldview_bookmarks", JSON.stringify(saved));
+      starBtn.classList.add("saved");
+      setTimeout(() => starBtn.classList.remove("saved"), 1500);
+    }
+    renderBookmarks();
+  }
+
+  // Enter = geocode + fly (typing already filters flights via the input handler)
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") flyToAddress(input.value); });
+  starBtn.addEventListener("click", saveBookmark);
+  renderBookmarks();
+}
+
+/* ============================================================
+   Live Fires layer (NASA FIRMS — free, no key)
+   Same source Bilawal uses in the video: VIIRS thermal detections
+   from the last 24h, served as JSON by /api/fires (server parses
+   the public FIRMS CSV — bypasses GIBS MVT entirely). Red/orange
+   flame icons = real burning hotspots (fires, gas flares, burning
+   tankers). Pulsing scale via a per-frame callback.
+   ============================================================ */
+// ---- FIRES: batched PointPrimitiveCollection (PERF) ----
+// 8.5K individual entities = 8.5K draw calls + per-frame CPU cost = the
+// main-thread bottleneck (low CPU/GPU but lagging). ONE collection = ONE
+// draw call. This is how Bilawal's app runs smooth with more data.
+const firePrimitives = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+const fireEntities = new Map();   // "lat,lon" -> point primitive
+let firesLayerReady = false;
+let firesPollTimer = null;
+
+async function loadFires() {
+  try {
+    const d = await api("/api/fires");
+    const fires = d.fires || [];
+    const seen = new Set();
+    for (const f of fires) {
+      const key = f.lat.toFixed(3) + "," + f.lon.toFixed(3);
+      seen.add(key);
+      let pt = fireEntities.get(key);
+      if (!pt) {
+        pt = firePrimitives.add({
+          position: Cesium.Cartesian3.fromDegrees(f.lon, f.lat, 0),
+          pixelSize: 5,
+          // GEMINI GOLDEN GOOSE spec: scaleByDistance(1.0e3, 0.8, 4.0e6, 0.1)
+          scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.8, 4.0e6, 0.1),
+          color: Cesium.Color.fromCssColorString("#ff4422"),
+          outlineColor: Cesium.Color.fromCssColorString("#ffcc00"),
+          outlineWidth: 1,
+          // v2.0 spec: disableDepthTestDistance = 0.0 (explicit) — fires on
+          // the opposite hemisphere stay properly hidden behind Earth's
+          // terrain (no x-ray through the globe)
+          disableDepthTestDistance: 0.0,
+          // GEMINI GOLDEN GOOSE spec: fires cull beyond 4,000 km
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 4000000.0),
+          id: f,   // the data object — drillPick returns it for the click card
+        });
+        fireEntities.set(key, pt);
+      }
+      pt.show = layerState.fires;
+    }
+    // remove fires that disappeared
+    for (const [key, pt] of fireEntities) {
+      if (!seen.has(key)) {
+        firePrimitives.remove(pt);
+        fireEntities.delete(key);
+      }
+    }
+    firesLayerReady = true;
+  } catch (e) {
+    console.log("[worldview] fire layer failed:", e.message);
+  }
+}
+
+// NOTE: no per-frame pulse loop here — 91K fire entities × scale writes
+// every frame was the #1 lag source. Static scale + scaleByDistance instead.
+
+
+/* ============================================================
+   Hurricanes layer (NOAA NHC — free, no key)
+   Active tropical cyclones: storm marker + forecast track polyline.
+   Data from /api/hurricanes (server caches 30 min, parses the
+   official NHC TRACK.kmz for the forecast line).
+   ============================================================ */
+const hurricaneEntities = new Map();   // storm id -> {marker, track}
+let hurricanesLayerReady = false;
+let hurricanesPollTimer = null;
+
+async function loadHurricanes() {
+  try {
+    const d = await api("/api/hurricanes");
+    const storms = d.storms || [];
+    const seen = new Set();
+    for (const s of storms) {
+      seen.add(s.id);
+      let ent = hurricaneEntities.get(s.id);
+      if (!ent) {
+        const marker = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 0),
+          billboard: {
+            image: "/static/hurricane_icon.png",
+            scale: 0.9,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          },
+          label: {
+            text: s.name + " (" + (s.classification || "?") + ")",
+            font: "11px Cascadia Code, Consolas, monospace",
+            fillColor: Cesium.Color.fromCssColorString("#ff9f43"),
+            outlineColor: Cesium.Color.fromCssColorString("#000000"),
+            outlineWidth: 2,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            pixelOffset: new Cesium.Cartesian2(0, -18),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          id: s,
+        });
+        const track = viewer.entities.add({
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArray(
+              s.track.flatMap(([lon, lat]) => [lon, lat])
+            ),
+            width: 2,
+            material: Cesium.Color.fromCssColorString("#ff9f43").withAlpha(0.85),
+            clampToGround: false,
+          },
+        });
+        ent = { marker, track };
+        hurricaneEntities.set(s.id, ent);
+      } else {
+        // live-update position + track (storms move between advisories)
+        ent.marker.position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 0);
+        if (s.track && s.track.length >= 2) {
+          ent.track.polyline.positions = Cesium.Cartesian3.fromDegreesArray(
+            s.track.flatMap(([lon, lat]) => [lon, lat])
+          );
+        }
+        ent.marker.id = s;
+      }
+      ent.marker.show = layerState.hurricanes;
+      ent.track.show = layerState.hurricanes;
+    }
+    // remove storms that dissipated
+    for (const [id, ent] of hurricaneEntities) {
+      if (!seen.has(id)) {
+        viewer.entities.remove(ent.marker);
+        viewer.entities.remove(ent.track);
+        hurricaneEntities.delete(id);
+      }
+    }
+    hurricanesLayerReady = true;
+  } catch (e) {
+    console.log("[worldview] hurricane layer failed:", e.message);
+  }
+}
+
+function wireHurricanesToggle() {
+  const el = document.getElementById("toggleHurricanes");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    layerState.hurricanes = el.checked;
+    for (const ent of hurricaneEntities.values()) {
+      ent.marker.show = el.checked;
+      ent.track.show = el.checked;
+    }
+  });
+}
+
+// fire click card — NASA VIIRS thermal detection metadata
+function showFireCard(f) {
+  let card = document.getElementById("fireCard");
+  if (!card) {
+    card = document.createElement("div");
+    card.id = "fireCard";
+    card.style.cssText =
+      "position:fixed;right:16px;bottom:52px;z-index:300;display:none;" +
+      "width:300px;background:rgba(13,18,28,0.95);border:1px solid #ff4422;" +
+      "border-radius:8px;padding:12px 14px;font-family:Consolas,monospace;" +
+      "font-size:12px;color:#d7e1ec;box-shadow:0 8px 24px rgba(0,0,0,0.5);";
+    card.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+      '  <div style="font-weight:700;color:#ff4422;letter-spacing:1px;">🔥 THERMAL DETECTION</div>' +
+      '  <button id="fireClose" style="background:none;border:none;color:#7c8ba0;font-size:16px;cursor:pointer;">✕</button>' +
+      "</div>" +
+      '<div id="fireSensor" style="font-size:10px;color:#7c8ba0;margin-bottom:8px;"></div>' +
+      '<div id="fireRows"></div>';
+    document.body.appendChild(card);
+    card.querySelector("#fireClose").addEventListener("click", () => { card.style.display = "none"; });
+  }
+  document.getElementById("fireSensor").textContent = "NASA VIIRS · Suomi NPP Satellite";
+  const conf = (f.confidence || "nominal").toLowerCase();
+  const confLabel = conf === "h" || conf === "high" ? "HIGH" : conf === "l" || conf === "low" ? "LOW" : "NOMINAL";
+  const confColor = conf === "h" || conf === "high" ? "#ff4422" : conf === "l" || conf === "low" ? "#ffaa00" : "#ffcc00";
+  const rows = [
+    ["Latitude", f.lat.toFixed(5)],
+    ["Longitude", f.lon.toFixed(5)],
+    ["Brightness", (f.brightness || 0).toFixed(1) + " K"],
+    ["Confidence", '<span style="color:' + confColor + ';">' + confLabel + "</span>"],
+    ["Detected", (f.acq_date || "—") + " " + (f.acq_time || "") + " UTC"],
+    ["Day/Night", f.daynight === "D" ? "Day" : "Night"],
+  ];
+  document.getElementById("fireRows").innerHTML = rows.map(([k, v]) =>
+    '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(31,42,58,0.5);">' +
+    '<span style="color:#7c8ba0;font-size:10px;text-transform:uppercase;">' + k + "</span>" +
+    '<span style="color:#ffcc66;">' + v + "</span></div>"
+  ).join("");
+  card.style.display = "block";
+}
+
+window.openFireCard = showFireCard;
+window.closeFireCard = function () {
+  const card = document.getElementById("fireCard");
+  if (card) card.style.display = "none";
+};
+
+function wireFiresToggle() {
+  const el = document.getElementById("toggleFires");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    layerState.fires = el.checked;
+    for (const ent of fireEntities.values()) ent.show = el.checked;
+  });
+}
+
+/* ============================================================
+   Weather & Cloud system — Cloud Cover / Live Rain Radar /
+   Camera Rain-Fog (3 toggles in the Data Layers HUD)
+   ============================================================ */
+let cloudLayer = null;          // NASA GIBS satellite cloud imagery
+let cloudsActive = false;
+let radarLayer = null;          // Iowa State NEXRAD live rain radar
+let radarActive = false;
+let rainFxActive = false;       // camera rain/fog overlay
+let cloudCollection = null;     // 3D procedural cumulus over hotspots
+let cloudEntities = [];         // per-hotspot cloud billboards
+
+// NASA GIBS WMS — VERIFIED 2026-08-13: host is gibs.earthdata.nasa.gov
+// (Gemini's "gibser" host is DEAD), needs VERSION=1.3.0, TIME as ISO date.
+const GIBS_WMS_URL = "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi";
+// Iowa State NEXRAD WMS — VERIFIED 2026-08-13: real PNG radar tiles.
+const RADAR_WMS_URL = "https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r-t.cgi";
+
+function toggleClouds() {
+  cloudsActive = !cloudsActive;
+  if (cloudsActive) {
+    try {
+      // CLOUD LAYER — USER-SUPPLIED TEXTURE (Boo 2026-08-13):
+      // https://shadedrelief.com/natural3/ne3_data/8192/clouds/fair_clouds_8k.jpg
+      // converted black→transparent, 4096×2048 equirectangular PNG.
+      // Single-tile imagery layer = zero gaps, zero seams, zero black
+      // voids — full-globe wrap with NO red tint and NO swath holes.
+      const provider = new Cesium.SingleTileImageryProvider({
+        url: "/static/clouds.png",
+      });
+      cloudLayer = viewer.imageryLayers.addImageryProvider(provider);
+      cloudLayer.alpha = 0.55;
+    } catch (e) {
+      console.log("[weather] cloud layer failed:", e.message);
+    }
+    spawnClouds();
+  } else {
+    if (cloudLayer) {
+      viewer.imageryLayers.remove(cloudLayer);
+      cloudLayer = null;
+    }
+    clearClouds();
+  }
+}
+
+function toggleRadar() {
+  radarActive = !radarActive;
+  if (radarActive) {
+    try {
+      radarLayer = viewer.imageryLayers.addImageryProvider(
+        new Cesium.WebMapServiceImageryProvider({
+          url: RADAR_WMS_URL,
+          layers: "nexrad-n0r-wmst",
+          parameters: {
+            transparent: "true",
+            format: "image/png",
+          },
+        })
+      );
+      radarLayer.alpha = 0.6;
+    } catch (e) {
+      console.log("[weather] radar layer failed:", e.message);
+    }
+  } else if (radarLayer) {
+    viewer.imageryLayers.remove(radarLayer);
+    radarLayer = null;
+  }
+}
+
+// 3D procedural cumulus clouds over the major hotspots (Ukraine, Middle
+// East, Taiwan, Korea, Sudan) — soft white puffs at ~2.5km altitude.
+function spawnClouds() {
+  if (cloudCollection) return;
+  cloudCollection = new Cesium.CloudCollection();
+  viewer.scene.primitives.add(cloudCollection);
+  const spots = [
+    [50.45, 30.52],   // Kyiv / Ukraine
+    [33.9, 35.9],     // Lebanon / Middle East
+    [26.57, 56.25],   // Strait of Hormuz
+    [24.5, 120.5],    // Taiwan Strait
+    [37.57, 126.98],  // Korean Peninsula
+    [15.5, 32.56],    // Sudan
+  ];
+  for (const [lat, lon] of spots) {
+    const c = cloudCollection.add({
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, 2500),
+      scale: 0.08,
+      maximumSize: new Cesium.Cartesian3(40000.0, 40000.0, 12000.0),
+      slice: 0.5,
+      color: Cesium.Color.WHITE.withAlpha(0.85),
+      show: true,
+    });
+    cloudEntities.push(c);
+  }
+}
+
+function clearClouds() {
+  if (cloudCollection) {
+    viewer.scene.primitives.remove(cloudCollection);
+    cloudCollection = null;
+    cloudEntities = [];
+  }
+}
+
+// Camera rain/fog: a translucent blue-grey fullscreen overlay + subtle
+// animated streaks (CSS) so the view feels like it's raining at the camera.
+function toggleRainFx() {
+  rainFxActive = !rainFxActive;
+  let fx = document.getElementById("rainFxOverlay");
+  if (rainFxActive) {
+    if (!fx) {
+      fx = document.createElement("div");
+      fx.id = "rainFxOverlay";
+      fx.style.cssText = "position:fixed;inset:0;z-index:90;pointer-events:none;" +
+        "background:linear-gradient(180deg,rgba(120,140,160,0.10),rgba(90,110,130,0.18));" +
+        "mix-blend-mode:screen;";
+      fx.innerHTML = '<div style="position:absolute;inset:-50%;opacity:0.5;' +
+        'background:repeating-linear-gradient(115deg,transparent 0 6px,rgba(200,220,240,0.10) 6px 7px);' +
+        'animation:rainDrift 0.6s linear infinite;"></div>';
+      const style = document.createElement("style");
+      style.id = "rainFxStyle";
+      style.textContent = "@keyframes rainDrift{from{transform:translateY(0)}to{transform:translateY(28px)}}";
+      document.head.appendChild(style);
+      document.body.appendChild(fx);
+    }
+    fx.style.display = "block";
+  } else if (fx) {
+    fx.style.display = "none";
+  }
+}
+
+function wireWeatherToggles() {
+  const c = document.getElementById("toggleClouds");
+  if (c) c.addEventListener("change", toggleClouds);
+  const r = document.getElementById("toggleRadar");
+  if (r) r.addEventListener("change", toggleRadar);
+  const rf = document.getElementById("toggleRainFx");
+  if (rf) rf.addEventListener("change", toggleRainFx);
+}
+
+/* ============================================================
+   Shader toggles (NVG / FLIR / CRT) — Agent 2/3 wiring
+   ============================================================ */
+function wireShaderToggles() {
+  if (!window.WorldViewShaders) return;   // module missing — buttons stay inert
+  const names = ["nvg", "flir", "crt"];
+  for (const name of names) {
+    const btn = document.getElementById("shader" + name[0].toUpperCase() + name.slice(1));
+    if (!btn) continue;
+    btn.addEventListener("click", () => {
+      if (WorldViewShaders.isEnabled(name)) {
+        WorldViewShaders.disable(name);
+        btn.classList.remove("active");
+      } else {
+        WorldViewShaders.enable(name);
+        btn.classList.add("active");
+      }
+    });
+  }
+}
+
+/* ============================================================
+   World War Watch (AGENT 2) — red haze zones, hotspot dots,
+   attack cards, windowed live streams, LIVE/PLAYBACK speeds
+   ============================================================ */
+// ---- state ----
+let wwwZones = [];                 // conflict zones from /api/conflict_zones
+let wwwHotspots = [];              // hotspots from /api/hotspots
+const wwwZoneEntities = [];        // haze ellipse/polygon entities
+let wwwDotPrimitives = null;       // PointPrimitiveCollection (darker red dots)
+const wwwDotData = [];             // parallel array: data object per dot
+let wwwSelectedHotspot = null;     // currently open attack card
+let wwwPlaybackMode = false;       // false = LIVE, true = PLAYBACK
+let wwwPlaybackSpeedSec = 7200;    // sim-seconds per real second (2H/S default)
+let wwwPlaybackTimer = null;       // advancing interval handle
+let wwwPlaybackRange = null;       // {min, max, count} from /api/playback/range
+let wwwPlaybackCursorMs = 0;       // current playback cursor (epoch ms)
+let wwwPlaybackPlaying = false;
+let wwwPulsePhase = 0;             // hotspot pulse phase accumulator
+// expose for debugging / agent bus
+window.wwwZones = wwwZones;
+window.wwwHotspots = wwwHotspots;
+
+// ---- red haze zones (semi-transparent red ellipses/polygons) ----
+async function loadConflictZones() {
+  try {
+    const d = await api("/api/conflict_zones");
+    wwwZones = d.zones || d || [];
+    if (!Array.isArray(wwwZones)) wwwZones = [];
+    for (const z of wwwZones) {
+      try {
+        const mat = Cesium.Color.fromCssColorString("#ff2222").withAlpha(0.16);
+        const outline = Cesium.Color.fromCssColorString("#ff4444").withAlpha(0.55);
+        let ent = null;
+        if (z.polygon && z.polygon.length >= 3) {
+          // polygon zone (array of [lat, lon])
+          const ring = z.polygon.map((p) => Cesium.Cartesian3.fromDegrees(p[1], p[0], 10));
+          ent = viewer.entities.add({
+            polygon: {
+              hierarchy: new Cesium.PolygonHierarchy(ring),
+              material: mat,
+              outline: true,
+              outlineColor: outline,
+              height: 10,
+            },
+          });
+        } else {
+          // ellipse zone (lat/lon + radius_km)
+          const r = (z.radius_km || 150) * 1000;
+          ent = viewer.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(z.lon, z.lat, 10),
+            ellipse: {
+              semiMajorAxis: r,
+              semiMinorAxis: r * (z.radius_ratio || 0.6),
+              material: mat,
+              outline: true,
+              outlineColor: outline,
+              height: 10,
+            },
+          });
+        }
+        ent._wwwZoneId = z.id || z.name;
+        ent._wwwZoneData = z;
+        wwwZoneEntities.push(ent);
+      } catch (e) { /* skip bad zone */ }
+    }
+    updateWwwCounts();
+    console.log(`[www] ${wwwZoneEntities.length} conflict zones drawn`);
+  } catch (e) {
+    console.log("[www] conflict zones unavailable:", e.message);
+  }
+}
+
+// ---- darker red pulsing hotspot dots ----
+async function loadHotspots() {
+  try {
+    const d = await api("/api/hotspots");
+    wwwHotspots = d.hotspots || d || [];
+    if (!Array.isArray(wwwHotspots)) wwwHotspots = [];
+    if (!wwwDotPrimitives) {
+      wwwDotPrimitives = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+    }
+    wwwDotPrimitives.removeAll();
+    wwwDotData.length = 0;
+    for (const h of wwwHotspots) {
+      const intensity = Math.max(0.2, Math.min(1, h.intensity || 0.6));
+      const data = Object.assign({ _worldviewHotspot: true }, h);
+      const pt = wwwDotPrimitives.add({
+        position: Cesium.Cartesian3.fromDegrees(h.lon, h.lat, 10),
+        pixelSize: 7 + intensity * 7,
+        color: Cesium.Color.fromCssColorString("#b30000"),
+        outlineColor: Cesium.Color.fromCssColorString("#ff4444"),
+        outlineWidth: 1.5,
+        disableDepthTestDistance: 0.0,
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0),
+        id: data,
+      });
+      wwwDotData.push(data);
+    }
+    updateWwwCounts();
+    console.log(`[www] ${wwwDotData.length} hotspot dots drawn`);
+  } catch (e) {
+    console.log("[www] hotspots unavailable:", e.message);
+  }
+}
+
+// per-frame pulse: darker red dots breathe — THROTTLED to ~10x/sec (was
+// every frame: 740 pixelSize writes/frame = measurable CPU cost on the
+// main thread; 100ms is visually identical, far cheaper)
+let wwwPulseLast = 0;
+function pulseHotspots() {
+  if (!wwwDotPrimitives || !wwwDotPrimitives.length || !layerState.wwwDots) return;
+  const nowMs = performance.now();
+  if (nowMs - wwwPulseLast < 100) return;
+  wwwPulseLast = nowMs;
+  wwwPulsePhase += 0.12;
+  const s = 0.5 + 0.5 * Math.sin(wwwPulsePhase);
+  const n = wwwDotPrimitives.length;
+  for (let i = 0; i < n; i++) {
+    const pt = wwwDotPrimitives.get(i);
+    const base = 7 + (wwwDotData[i] ? Math.max(0.2, Math.min(1, wwwDotData[i].intensity || 0.6)) : 0.6) * 7;
+    pt.pixelSize = base * (0.85 + 0.3 * s);
+  }
+}
+viewer.scene.postUpdate.addEventListener(pulseHotspots);
+
+// ---- HOT ZONE FOCUS: on load, fly to the hottest war spot ----
+// After boot the camera NEVER moves here — the red bot is the only camera
+// mover, and it only flies on a REAL emergency (different war, score >=
+// 1.5x, 5-min cycle). This function just keeps the 🎯 status line fresh.
+let wwwHotZoneId = null;          // zone id currently focused
+let wwwHotZoneTimer = null;
+let wwwHotZoneFirst = true;       // first focus happens on boot
+
+async function focusHotZone(announce) {
+  try {
+    const d = await api("/api/hot_zone");
+    const z = d && d.zone;
+    if (!z) return;
+    const id = z.id || z.name;
+    const el = document.getElementById("wwwHotZone");
+    if (el) {
+      el.textContent = `🎯 ${z.name} — ${d.event_count} live events`;
+      el.style.display = "block";
+    }
+    // BOOT ONLY: fly to the #1 spot once. After that, no camera movement —
+    // the red bot decides when a big event is worth moving for.
+    if (wwwHotZoneFirst) {
+      wwwHotZoneFirst = false;
+      wwwHotZoneId = id;
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(z.lon, z.lat, 2600000),
+        duration: 4.0,
+      });
+    }
+    if (announce) console.log(`[www] hot zone: ${z.name} (${d.event_count} events, score ${d.score})`);
+  } catch (e) {
+    console.log("[www] hot zone focus failed:", e.message);
+  }
+}
+
+// re-check every 5 min — status line only, camera stays put
+wwwHotZoneTimer = setInterval(() => focusHotZone(true), 300000);
+
+// ---- attack card (ATTACKER / TARGET / DATE / TYPE / LOCATION / VERIFIED) ----
+function showAttackCard(hotspot) {
+  wwwSelectedHotspot = hotspot;
+  const zone = hotspot.zone_id
+    ? wwwZones.find((z) => (z.id || z.name) === hotspot.zone_id)
+    : null;
+  const atk = hotspot.attack || (zone && zone.attacks && zone.attacks[0]) || {};
+  const name = hotspot.label || hotspot.name || (zone ? zone.name : "Hotspot");
+  document.getElementById("attackName").textContent = name;
+  const verified = atk.verified !== false && atk.verified !== "false";
+  const rows = [
+    ["Attacker", atk.attacker || hotspot.attacker || "—"],
+    ["Target", atk.target || hotspot.target || "—"],
+    ["Approx Date", atk.date || atk.approx_date || hotspot.date || "—"],
+    ["Type", atk.type || hotspot.type || "—"],
+    ["Location", atk.location || hotspot.location || (hotspot.lat !== undefined ? hotspot.lat.toFixed(3) + ", " + hotspot.lon.toFixed(3) : "—")],
+    ["Verified", '<span class="' + (verified ? "verified" : "unverified") + '">' + (verified ? "✓ VERIFIED" : "⚠ UNVERIFIED") + "</span>"],
+  ];
+  document.getElementById("attackRows").innerHTML = rows.map(([k, v]) =>
+    '<div class="ac-row"><span class="ac-label">' + k + '</span><span class="ac-val">' + v + "</span></div>"
+  ).join("");
+  document.getElementById("attackCard").style.display = "block";
+  // SINGLE PLAYER: the 24/7 channel-based modal is the only stream window.
+  // (The old #streamWindow is retired for hotspot clicks — opening both
+  // stacked two windows: one errored, the other played behind it.)
+  if (typeof openHotspotModal === "function") {
+    const hk = zone ? (zone.id || zone.name) : (hotspot.zone_id || "default");
+    const hlat = zone ? zone.lat : hotspot.lat;
+    const hlon = zone ? zone.lon : hotspot.lon;
+    openHotspotModal(hk, name, hlat, hlon);
+  }
+}
+
+// ============ 24/7 CHANNEL-BASED LIVE STREAM GEO-ROUTER ============
+// Every hotspot gets its OWN stream matched to its real location — no more
+// one-default-fits-all. Channel-based embeds NEVER expire (live_stream?
+// channel= always resolves to whatever the channel is airing NOW).
+// All channel IDs VERIFIED against YouTube's own channel pages 2026-08-13.
+const YT_CHANNELS = {
+  "Al Jazeera": "UCfiwzLy-8yKzIbsmZTzxDgw",
+  "Al Arabiya": "UCrj5BGAhtWxDfqbza9T9hqA",
+  "Al Mayadeen": "UCZCFHCU-2eGF7V5ciMkoPHw",
+  "Press TV": "UC0OO19kc2jt8ZtOWZMVa3Vw",
+  "TRT World": "UCnyCrv8b7bu0oWFXGyHaPzg",
+  "DW News": "UCbbS1GE942k3UVqpLklyhIA",
+  "Sky News": "UCkFclpi8U9VJjfxLYoms7Aw",
+  "France 24": "UCQfwfsi5VrQ8yKZ-UWmAEFg",
+  "BBC News": "UC16niRr50-MSBwiO3YDb3RA",
+  "CNN": "UCupvZG-5ko_eiXAupbDfxWw",
+  "ABC News": "UCBi2mrWuNuyYy4gbM6fU18Q",
+  "CGTN": "UCd94YCD7yp6d-YZSRYWyeFA",
+  "TaiwanPlus": "UCHWZrE1UY7eL82fAIzskBYA",
+  "VOA News": "UCKyTokYo0nK2OA-az-sDijA",
+  "Sudan Tribune": "UCrnkurRbU8ftAXCPKoONFbg",
+  "Mizzima TV": "UC9duwzgDlAnqCF7k1tlvrXw",
+  "DVB News": "UC60W37GZodr7kTcqKqTWf9A",
+  "KyivLive": "UCwTXL6Sax8q4aqJ1pNNTGgA",
+  "UkraineNOW": "UCVkYsQMROZHp_5AJiKKWFXA",
+};
+
+// NAMED-ZONE OVERRIDE: specific channel lists for the known conflict zones
+// (takes priority over geo-matching). Falls back to geo-region for any
+// other hotspot.
+const HOTSPOT_STREAMS = {
+  "ukraine": ["KyivLive", "UkraineNOW", "DW News", "BBC News", "Al Jazeera"],
+  "middle_east": ["Al Jazeera", "Al Arabiya", "Al Mayadeen", "Press TV", "TRT World"],
+  "gaza": ["Al Jazeera", "Al Mayadeen", "Press TV", "TRT World", "BBC News"],
+  "iran-hormuz": ["Al Jazeera", "Al Arabiya", "Press TV", "TRT World", "BBC News"],
+  "yemen": ["Al Jazeera", "Al Arabiya", "Al Mayadeen", "TRT World"],
+  "red-sea": ["Al Jazeera", "Al Mayadeen", "Sudan Tribune", "TRT World", "BBC News"],
+  "lebanon": ["Al Jazeera", "Al Mayadeen", "TRT World", "BBC News"],
+  "taiwan": ["TaiwanPlus", "CGTN", "Sky News", "BBC News", "CNN"],
+  "taiwan-strait": ["TaiwanPlus", "CGTN", "Sky News", "BBC News", "CNN"],
+  "korea": ["CGTN", "France 24", "VOA News", "BBC News", "CNN"],
+  "sudan": ["Sudan Tribune", "Al Jazeera", "BBC News", "France 24"],
+  "myanmar": ["Mizzima TV", "DVB News", "CGTN", "BBC News", "Al Jazeera"],
+  "default": ["Sky News", "BBC News", "CNN", "Al Jazeera", "DW News", "France 24"],
+};
+
+// REGION → channel list (regional/local channels FIRST, global news after).
+// A hotspot's lat/lon picks its region; the modal plays the first channel
+// and offers the rest in the switcher.
+const HOTSPOT_REGIONS = [
+  { name: "Ukraine / Eastern Europe", test: (la, lo) => la >= 44 && la <= 53 && lo >= 22 && lo <= 40,
+    chans: ["KyivLive", "UkraineNOW", "DW News", "BBC News", "Al Jazeera"] },
+  { name: "Middle East / Persian Gulf", test: (la, lo) => la >= 12 && la <= 38 && lo >= 34 && lo <= 60,
+    chans: ["Al Jazeera", "Al Arabiya", "Al Mayadeen", "Press TV", "TRT World", "BBC News"] },
+  { name: "Gaza / Israel", test: (la, lo) => la >= 29.5 && la <= 33.5 && lo >= 33.5 && lo <= 36,
+    chans: ["Al Jazeera", "Al Mayadeen", "Press TV", "TRT World", "BBC News"] },
+  { name: "Red Sea / Horn of Africa", test: (la, lo) => la >= 10 && la <= 20 && lo >= 35 && lo <= 45,
+    chans: ["Al Jazeera", "Al Mayadeen", "Sudan Tribune", "TRT World", "BBC News"] },
+  { name: "Sudan / Sahel", test: (la, lo) => la >= 8 && la <= 22 && lo >= 20 && lo <= 38,
+    chans: ["Sudan Tribune", "Al Jazeera", "BBC News", "France 24"] },
+  { name: "Yemen / Arabian Sea", test: (la, lo) => la >= 10 && la <= 20 && lo >= 42 && lo <= 55,
+    chans: ["Al Jazeera", "Al Arabiya", "Al Mayadeen", "TRT World"] },
+  { name: "Myanmar / SE Asia", test: (la, lo) => la >= 5 && la <= 28 && lo >= 90 && lo <= 110,
+    chans: ["Mizzima TV", "DVB News", "CGTN", "BBC News", "Al Jazeera"] },
+  { name: "Taiwan / Indo-Pacific", test: (la, lo) => la >= 15 && la <= 30 && lo >= 115 && lo <= 130,
+    chans: ["TaiwanPlus", "CGTN", "Sky News", "BBC News", "CNN"] },
+  { name: "Korean Peninsula", test: (la, lo) => la >= 33 && la <= 43 && lo >= 124 && lo <= 131,
+    chans: ["CGTN", "France 24", "VOA News", "BBC News", "CNN"] },
+  { name: "South Asia / India", test: (la, lo) => la >= 5 && la <= 35 && lo >= 60 && lo <= 90,
+    chans: ["BBC News", "Al Jazeera", "CNN", "France 24"] },
+  { name: "Africa (general)", test: (la, lo) => la >= -35 && la <= 35 && lo >= -20 && lo <= 52,
+    chans: ["BBC News", "Al Jazeera", "France 24", "CNN"] },
+  { name: "Europe (general)", test: (la, lo) => la >= 35 && la <= 70 && lo >= -10 && lo <= 40,
+    chans: ["DW News", "BBC News", "France 24", "Sky News", "Al Jazeera"] },
+  { name: "Americas", test: (la, lo) => la >= -60 && la <= 70 && lo >= -170 && lo <= -30,
+    chans: ["CNN", "ABC News", "BBC News", "Al Jazeera"] },
+  { name: "Global", test: () => true,
+    chans: ["Sky News", "BBC News", "CNN", "Al Jazeera", "DW News", "France 24"] },
+];
+
+function hotspotRegionFor(lat, lon) {
+  for (const r of HOTSPOT_REGIONS) {
+    if (r.test(lat, lon)) return r;
+  }
+  return HOTSPOT_REGIONS[HOTSPOT_REGIONS.length - 1];   // Global
+}
+
+// live state from server (refreshed every 5 min server-side): name -> {live, videoId}
+let ytLiveState = {};
+
+async function loadYtLiveState() {
+  try {
+    const d = await api("/api/yt_live");
+    if (d && d.channels) {
+      // server keys are handles (KyivLive, DWNews...) — map to display names
+      const mapped = {};
+      for (const [handle, info] of Object.entries(d.channels)) {
+        mapped[YT_CHANNELS_HANDLE[handle] || handle] = info;
+      }
+      ytLiveState = mapped;
+    }
+  } catch (e) {
+    console.log("[ww] yt live state failed:", e.message);
+  }
+}
+
+// handle (server key) -> display name
+const YT_CHANNELS_HANDLE = {
+  KyivLive: "KyivLive", UkraineNOW: "UkraineNOW", DWNews: "DW News",
+  aljazeeraenglish: "Al Jazeera", AlMayadeenEnglish: "Al Mayadeen",
+  PressTV: "Press TV", trtworld: "TRT World", AlArabiya: "Al Arabiya",
+  SudanTribune: "Sudan Tribune", MizzimaTV: "Mizzima TV", DVBNews: "DVB News",
+  VOAnews: "VOA News", taiwanplus: "TaiwanPlus", CGTN: "CGTN",
+  SkyNews: "Sky News", BBCNews: "BBC News", CNN: "CNN",
+  France24: "France 24", ABCNews: "ABC News",
+};
+
+function channelEmbedUrl(channelName) {
+  const cid = YT_CHANNELS[channelName];
+  if (!cid) return null;
+  const live = ytLiveState[channelName];
+  // if the channel is LIVE and we know its videoId, embed the actual
+  // playing video — always plays. Channel-page embeds show "Video
+  // unavailable" whenever the channel is offline.
+  if (live && live.live && live.videoId) {
+    return "https://www.youtube.com/embed/" + live.videoId;
+  }
+  return "https://www.youtube.com/embed/live_stream?channel=" + cid;
+}
+
+// current modal state: the channel list + which channel is playing
+let wwwModalChannels = [];
+let wwwModalChannelIdx = 0;
+
+function openHotspotModal(hotspotKey, title, lat, lon) {
+  const iframe = document.getElementById("hotspotIframe");
+  if (!iframe) return;
+  // pick the channel list: named zone override, else geo-match on lat/lon
+  const named = HOTSPOT_STREAMS[hotspotKey];
+  if (named && named.length) {
+    wwwModalChannels = named.slice();
+  } else if (lat !== undefined && lon !== undefined) {
+    wwwModalChannels = hotspotRegionFor(lat, lon).chans.slice();
+  } else {
+    wwwModalChannels = HOTSPOT_REGIONS[HOTSPOT_REGIONS.length - 1].chans.slice();
+  }
+  wwwModalChannelIdx = 0;
+  // LIVE-FIRST: channels actually broadcasting go to the top (keeps relative
+  // order within each group), so the modal opens on a PLAYING stream.
+  {
+    const liveFirst = [];
+    const rest = [];
+    for (const c of wwwModalChannels) {
+      if (ytLiveState[c] && ytLiveState[c].live) liveFirst.push(c);
+      else rest.push(c);
+    }
+    wwwModalChannels = liveFirst.concat(rest);
+  }
+  // populate the channel switcher
+  const sel = document.getElementById("hotspotChannelSel");
+  if (sel) {
+    sel.innerHTML = wwwModalChannels.map((c, i) =>
+      '<option value="' + i + '">' + c + ((ytLiveState[c] && ytLiveState[c].live) ? " (LIVE)" : "") + "</option>"
+    ).join("");
+    sel.selectedIndex = 0;
+  }
+  wwwModalPlayChannel();
+  const t = document.getElementById("hotspotTitle");
+  if (t) t.textContent = title || "LIVE FEED";
+  const wl = document.getElementById("hotspotWatchLink");
+  if (wl) {
+    wl.href = "https://www.youtube.com/results?search_query=" + encodeURIComponent((title || "live") + " live");
+    wl.style.display = "inline-block";
+  }
+  document.getElementById("hotspotModal").style.display = "block";
+}
+
+function wwwModalPlayChannel() {
+  const iframe = document.getElementById("hotspotIframe");
+  const noLive = document.getElementById("hotspotNoLive");
+  if (!iframe) return;
+  const name = wwwModalChannels[wwwModalChannelIdx];
+  const url = channelEmbedUrl(name);
+  if (!url) {
+    if (noLive) noLive.style.display = "block";
+    iframe.src = "";
+    return;
+  }
+  if (noLive) noLive.style.display = "none";
+  // CRITICAL: videoId embeds have NO query string — appending "&autoplay=1"
+  // directly glues params onto the video ID (invalid URL → Video
+  // unavailable). Use "?" when the URL has no query, "&" when it does.
+  const sep = url.indexOf("?") >= 0 ? "&" : "?";
+  iframe.src = url + sep + "autoplay=1&mute=1&enablejsapi=1";
+  const sel = document.getElementById("hotspotChannelSel");
+  if (sel) sel.selectedIndex = wwwModalChannelIdx;
+}
+
+function closeHotspotModal() {
+  const iframe = document.getElementById("hotspotIframe");
+  if (iframe) iframe.src = "";
+  const noLive = document.getElementById("hotspotNoLive");
+  if (noLive) noLive.style.display = "none";
+  const m = document.getElementById("hotspotModal");
+  if (m) m.style.display = "none";
+}
+
+function wireHotspotModal() {
+  const close = document.getElementById("hotspotClose");
+  if (close) close.addEventListener("click", closeHotspotModal);
+  const sel = document.getElementById("hotspotChannelSel");
+  if (sel) {
+    sel.addEventListener("change", () => {
+      wwwModalChannelIdx = parseInt(sel.value, 10) || 0;
+      wwwModalPlayChannel();
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeHotspotModal();
+  });
+}
+
+function openZoneStream(zone) {
+  const urls = (zone && zone.live_feed_urls) || [];
+  const frame = document.getElementById("streamFrame");
+  const empty = document.getElementById("streamEmpty");
+  const title = document.getElementById("streamTitle");
+  const watchLink = document.getElementById("streamWatchLink");
+  if (urls.length && urls[0].url) {
+    frame.src = urls[0].url;
+    frame.style.display = "block";
+    empty.style.display = "none";
+    title.textContent = "LIVE FEED · " + (urls[0].name || (zone ? zone.name : "")) + " · " + (zone ? zone.name : "");
+    // fallback: if the embed is blocked (YouTube Error 153 / sign-in wall),
+    // one click opens the live page in a new tab — always plays
+    if (watchLink) {
+      watchLink.href = urls[0].watch_url || ("https://www.youtube.com/results?search_query=" + encodeURIComponent((zone ? zone.name : "live") + " live"));
+      watchLink.style.display = "inline-block";
+    }
+  } else {
+    frame.src = "";
+    frame.style.display = "none";
+    empty.style.display = "flex";
+    title.textContent = "LIVE FEED";
+    if (watchLink) watchLink.style.display = "none";
+  }
+  document.getElementById("streamWindow").style.display = "block";
+}
+
+function closeAttackCard() {
+  wwwSelectedHotspot = null;
+  const card = document.getElementById("attackCard");
+  if (card) card.style.display = "none";
+}
+
+function closeStreamWindow() {
+  const frame = document.getElementById("streamFrame");
+  if (frame) frame.src = "";
+  const w = document.getElementById("streamWindow");
+  if (w) w.style.display = "none";
+}
+
+window.openAttackCard = showAttackCard;
+window.closeAttackCard = closeAttackCard;
+window.closeStreamWindow = closeStreamWindow;
+
+// ---- RED BOT: autonomous hot-zone patrol ----
+// Every 5 MINUTES the bot re-checks the hot zones. It STAYS on the current
+// zone unless a DIFFERENT war is WAY hotter (score >= 1.5x the current) —
+// then it flies there and opens the card + live feed. No 20s camera yanks,
+// no iframe reloads every 20s (that froze the app). POLITENESS: if the user
+// touched the camera in the last 30s, the cycle is skipped.
+let wwwBotLastUserInteract = 0;    // last time the USER moved the camera
+let wwwBotFlying = false;          // true while the bot's own flyTo runs
+let wwwBotTimer = null;
+let wwwBotCurrentZoneId = null;    // zone the bot is currently watching
+let wwwBotCurrentScore = 0;        // its score when adopted
+window.wwwBotActive = { enabled: true, lastPatrol: null, currentZone: null, lastSkip: null };
+
+function initWwwBot() {
+  const toggle = document.getElementById("wwwBotToggle");
+  if (!toggle) return;
+  toggle.addEventListener("change", () => {
+    window.wwwBotActive.enabled = toggle.checked;
+    const st = document.getElementById("wwwBotStatus");
+    if (st) st.textContent = toggle.checked ? "🤖 red bot armed" : "🤖 red bot offline";
+  });
+  // user interaction detector — REAL input only (mouse/touch/keyboard).
+  // NOT camera.changed: idle auto-rotation fires camera.changed constantly,
+  // which made the bot think the user was always interacting -> it never
+  // patrolled ("standby — user control" forever). The bot's own flyTo is
+  // excluded via wwwBotFlying.
+  const _botInput = () => { wwwBotLastUserInteract = Date.now(); };
+  viewer.screenSpaceEventHandler.setInputAction(_botInput, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+  viewer.screenSpaceEventHandler.setInputAction(_botInput, Cesium.ScreenSpaceEventType.RIGHT_DOWN);
+  viewer.screenSpaceEventHandler.setInputAction(_botInput, Cesium.ScreenSpaceEventType.WHEEL);
+  document.addEventListener("keydown", _botInput);
+  // 5-minute cycle: only switch when a NEW war is WAY hotter
+  wwwBotTimer = setInterval(wwwBotPatrol, 300000);
+}
+
+function wwwHaversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// hottest dot (highest intensity) within radius_km of the zone center
+function wwwBotPickHotDot(zone) {
+  const r = zone.radius_km || 150;
+  let best = null;
+  let bestI = -1;
+  for (let i = 0; i < wwwDotData.length; i++) {
+    const h = wwwDotData[i];
+    if (h.lat === undefined || h.lon === undefined) continue;
+    if (wwwHaversineKm(zone.lat, zone.lon, h.lat, h.lon) > r) continue;
+    const inten = h.intensity || 0;
+    if (best === null || inten > bestI) { best = h; bestI = inten; }
+  }
+  return best;
+}
+
+// ANCHOR DOT: if a zone has no real hotspot dot (sparse FIRMS detections),
+// plant a clickable red dot at the zone center so the live feed is always
+// one click away. Reused across patrols (keyed by zone id).
+const wwwAnchorDots = new Map();   // zone_id -> point primitive
+
+function wwwBotEnsureDot(z) {
+  const id = z.id || z.name;
+  const real = wwwBotPickHotDot(z);
+  if (real) return real;
+  let pt = wwwAnchorDots.get(id);
+  if (pt) return pt.id;
+  if (!wwwDotPrimitives) {
+    wwwDotPrimitives = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+  }
+  const data = {
+    _worldviewHotspot: true,
+    zone_id: id,
+    lat: z.lat, lon: z.lon,
+    intensity: 0.6,
+    count: 0,
+    label: z.name || id,
+    anchor: true,
+  };
+  pt = wwwDotPrimitives.add({
+    position: Cesium.Cartesian3.fromDegrees(z.lon, z.lat, 10),
+    pixelSize: 12,
+    color: Cesium.Color.fromCssColorString("#b30000"),
+    outlineColor: Cesium.Color.fromCssColorString("#ff4444"),
+    outlineWidth: 2,
+    disableDepthTestDistance: 0.0,
+    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0),
+    id: data,
+  });
+  wwwAnchorDots.set(id, pt);
+  wwwDotData.push(data);
+  return data;
+}
+
+async function wwwBotPatrol() {
+  const toggle = document.getElementById("wwwBotToggle");
+  const st = document.getElementById("wwwBotStatus");
+  if (!toggle || !toggle.checked || !layerState.wwwDots) return;
+  if (Date.now() - wwwBotLastUserInteract < 30000) {
+    window.wwwBotActive.lastSkip = Date.now();
+    if (st) st.textContent = "🤖 standby — user control";
+    return;
+  }
+  try {
+    const d = await api("/api/hot_zones");
+    const zones = (d && d.zones) || [];
+    if (!zones.length) return;
+    const top = zones[0];   // #1 hottest
+    const z = Object.assign({}, top.zone || {}, { live_feed_urls: top.live_feed_urls || [] });
+    if (z.lat === undefined || z.lon === undefined) return;
+    const id = z.id || z.name;
+    const score = top.score || 0;
+    // first patrol: adopt the zone the boot focus already flew to
+    if (wwwBotCurrentZoneId === null) {
+      wwwBotCurrentZoneId = id;
+      wwwBotCurrentScore = score;
+      window.wwwBotActive.currentZone = z.name || id;
+      window.wwwBotActive.lastPatrol = Date.now();
+      const dot = wwwBotEnsureDot(z);
+      if (dot) showAttackCard(dot);
+      if (typeof openHotspotModal === "function") openHotspotModal(id, z.name || id, z.lat, z.lon);
+      if (st) st.textContent = "🤖 watching: " + String(z.name || "?").toUpperCase() + " — " + (top.event_count || 0) + " live events";
+      return;
+    }
+    // only switch when a DIFFERENT war is WAY hotter (>= 1.5x score)
+    if (id !== wwwBotCurrentZoneId && score >= wwwBotCurrentScore * 1.5) {
+      wwwBotCurrentZoneId = id;
+      wwwBotCurrentScore = score;
+      window.wwwBotActive.currentZone = z.name || id;
+      window.wwwBotActive.lastPatrol = Date.now();
+      wwwBotFlying = true;
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(z.lon, z.lat, 2200000),
+        duration: 3.0,
+      }).then(() => { wwwBotFlying = false; }).catch(() => { wwwBotFlying = false; });
+      setTimeout(() => { wwwBotFlying = false; }, 5000);   // safety net
+      setTimeout(() => {
+        const dot = wwwBotEnsureDot(z);
+        if (dot) showAttackCard(dot);
+        if (typeof openHotspotModal === "function") openHotspotModal(id, z.name || id, z.lat, z.lon);
+      }, 1800);
+      if (st) st.textContent = "🤖 SWITCHED → " + String(z.name || "?").toUpperCase() + " — " + (top.event_count || 0) + " live events";
+    } else {
+      // same war still hottest — stay put, just refresh the status
+      window.wwwBotActive.lastPatrol = Date.now();
+      if (st) st.textContent = "🤖 watching: " + String(z.name || "?").toUpperCase() + " — " + (top.event_count || 0) + " live events";
+    }
+  } catch (e) {
+    console.log("[www] red bot patrol failed:", e.message);
+  }
+}
+
+// ---- NEWS TICKER: scrolling hot-zone headlines (bottom bar) ----
+let wwwTickerTimer = null;
+
+function initWwwTicker() {
+  fetchTicker();
+  wwwTickerTimer = setInterval(() => {
+    const track = document.getElementById("wwwTickerTrack");
+    if (!track || !track.children.length) return;
+    track.scrollLeft += 2;   // 2x speed (was 1px/30ms)
+    if (track.scrollWidth > 0 && track.scrollLeft >= track.scrollWidth / 2) {
+      track.scrollLeft -= track.scrollWidth / 2;
+    }
+  }, 30);
+  setInterval(fetchTicker, 300000);   // refresh data every 5 min
+}
+
+function wwwTickerEscape(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+async function fetchTicker() {
+  const track = document.getElementById("wwwTickerTrack");
+  if (!track) return;
+  try {
+    const d = await api("/api/hot_zones");
+    const zones = (d && d.zones) || [];
+    const items = zones.map((entry) => {
+      const z = entry.zone || {};
+      const name = wwwTickerEscape(String(z.name || "?").toUpperCase());
+      const n = entry.event_count || 0;
+      const s = entry.score !== undefined ? entry.score : 0;
+      return '<span class="ticker-item"><b>' + name + '</b> — <span class="tk-events">' + n + ' live events</span> · score ' + s + '</span>';
+    });
+    if (!items.length) return;
+    track.innerHTML = items.join("") + items.join("");   // doubled for seamless wrap
+  } catch (e) {
+    console.log("[www] ticker refresh failed:", e.message);
+  }
+}
+
+// ---- LIVE / PLAYBACK toggle with speeds (30M/S, 2H/S, 6H/S) ----
+// PLAYBACK scrubs the telemetry DB timeline: the cursor advances at
+// wwwPlaybackSpeedSec sim-seconds per real second and each step fetches
+// the nearest /api/playback snapshot, which swaps entity positions to
+// the historical state (applyPlaybackStates).
+async function wwwEnterPlayback() {
+  wwwPlaybackMode = true;
+  setPlaybackMode(true);   // sync the existing topbar toggle + badge
+  try {
+    const r = await api("/api/playback/range");
+    if (r && r.min) {
+      wwwPlaybackRange = r;
+      wwwPlaybackCursorMs = new Date(r.max.replace(" ", "T") + "Z").getTime();
+      wwwPlaybackPlaying = true;
+      wwwStartPlaybackTimer();
+      wwwUpdatePlaybackStamp();
+    } else {
+      document.getElementById("wwwPlaybackStamp").textContent = "PLAYBACK — no telemetry data yet";
+    }
+  } catch (e) {
+    document.getElementById("wwwPlaybackStamp").textContent = "PLAYBACK — telemetry DB unavailable";
+  }
+}
+
+function wwwExitPlayback() {
+  wwwPlaybackMode = false;
+  wwwPlaybackPlaying = false;
+  if (wwwPlaybackTimer) { clearInterval(wwwPlaybackTimer); wwwPlaybackTimer = null; }
+  setPlaybackMode(false);   // restore live entities
+  document.getElementById("wwwPlaybackStamp").textContent = "LIVE — real-time telemetry";
+}
+
+function wwwStartPlaybackTimer() {
+  if (wwwPlaybackTimer) clearInterval(wwwPlaybackTimer);
+  wwwPlaybackTimer = setInterval(wwwPlaybackTick, 1000);
+}
+
+async function wwwPlaybackTick() {
+  if (!wwwPlaybackMode || !wwwPlaybackPlaying || !wwwPlaybackRange) return;
+  wwwPlaybackCursorMs += wwwPlaybackSpeedSec * 1000;
+  const maxMs = new Date(wwwPlaybackRange.max.replace(" ", "T") + "Z").getTime();
+  if (wwwPlaybackCursorMs > maxMs) {
+    // loop back to the start of the timeline
+    wwwPlaybackCursorMs = new Date(wwwPlaybackRange.min.replace(" ", "T") + "Z").getTime();
+  }
+  wwwUpdatePlaybackStamp();
+  const iso = new Date(wwwPlaybackCursorMs).toISOString().slice(0, 19).replace("T", " ");
+  fetchPlaybackAt(iso);
+}
+
+function wwwUpdatePlaybackStamp() {
+  const el = document.getElementById("wwwPlaybackStamp");
+  if (!el) return;
+  if (!wwwPlaybackMode) {
+    el.textContent = "LIVE — real-time telemetry";
+    return;
+  }
+  const d = new Date(wwwPlaybackCursorMs);
+  const pad = (n) => String(n).padStart(2, "0");
+  el.textContent = "PLAYBACK " + d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()) +
+    " " + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) + " UTC";
+}
+
+function setWwwMode(live) {
+  const liveBtn = document.getElementById("wwwModeLive");
+  const pbBtn = document.getElementById("wwwModePlayback");
+  if (live) {
+    wwwExitPlayback();
+    liveBtn.classList.add("active-live");
+    pbBtn.classList.remove("active-pb");
+  } else {
+    wwwEnterPlayback();
+    liveBtn.classList.remove("active-live");
+    pbBtn.classList.add("active-pb");
+  }
+}
+
+function updateWwwCounts() {
+  const el = document.getElementById("wwwCounts");
+  if (el) el.textContent = "zones " + wwwZoneEntities.length + " · dots " + wwwDotData.length;
+}
+
+function wireWwwPanel() {
+  document.getElementById("wwwModeLive").addEventListener("click", () => setWwwMode(true));
+  document.getElementById("wwwModePlayback").addEventListener("click", () => setWwwMode(false));
+  document.getElementById("wwwSpeedSel").addEventListener("change", (e) => {
+    wwwPlaybackSpeedSec = parseInt(e.target.value, 10) || 7200;
+  });
+  document.getElementById("attackClose").addEventListener("click", closeAttackCard);
+  document.getElementById("streamClose").addEventListener("click", closeStreamWindow);
+  document.getElementById("wwwToggleZones").addEventListener("change", (e) => {
+    layerState.wwwZones = e.target.checked;
+    for (const ent of wwwZoneEntities) ent.show = layerState.wwwZones;
+  });
+  document.getElementById("wwwToggleDots").addEventListener("change", (e) => {
+    layerState.wwwDots = e.target.checked;
+    if (wwwDotPrimitives) wwwDotPrimitives.show = layerState.wwwDots;
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeAttackCard();
+      closeStreamWindow();
+    }
+  });
+}
+
+/* ============================================================
+   Boot: ships layer
+   ============================================================ */
+wireShipToggle();
+wireShipClicks();
+wireFiresToggle();
+wireHurricanesToggle();
+wireWeatherToggles();
+// Clouds ON at boot (user request): check the box + fire the toggle
+// (user-supplied texture layer — full-globe wrap, no gaps, no tint)
+{
+  const _cCloud = document.getElementById("toggleClouds");
+  if (_cCloud && !_cCloud.checked) {
+    _cCloud.checked = true;
+    toggleClouds();
+  }
+}
+wireShaderToggles();
+initWwwBot();          // red bot autonomous patrol (declarations above)
+initWwwTicker();       // bottom news ticker (declarations above)
+wireHotspotModal();    // 24/7 channel-based live stream modal
+loadYtLiveState();     // live-state + videoIds for the stream modal (live-first)
+setInterval(loadYtLiveState, 300000);   // refresh live state every 5 min
+firesPollTimer = setInterval(loadFires, 600000);   // refresh every 10 min
+shipPollTimer = setInterval(loadShips, 60000);   // refresh every 60s
+</script>
+<script src="/static/cameras.js"></script>
+</body>
+</html>

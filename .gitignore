@@ -1,0 +1,20 @@
+# WorldView — git ignore (Codex pipeline needs a repo; keep the giant files out)
+worldview.db
+worldview.db-*
+*.log
+__pycache__/
+dist/
+build/
+installer/
+*.exe
+*.spec
+data/
+_cap.xml
+_cloudfrac_sample.png
+_feed_audit*.json
+_see_glitch.py
+_v2_2_final.png
+last_flights.json
+*.v_working
+*.v1_*
+*.v2_*
