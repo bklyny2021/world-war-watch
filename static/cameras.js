@@ -17,8 +17,8 @@
   var REFRESH_MS = 5000;           // popup image refresh interval (spec: 5s)
 
   var viewer = null;               // Cesium viewer (window.viewer)
-  var dataSource = null;           // Cesium.CustomDataSource for cameras
-  var cameraEntities = [];         // entity per camera
+  var cameraBillboards = null;     // GPU-batched camera markers
+  var cameraEntities = [];         // billboard per camera (legacy name kept)
   var camById = {};                // id -> {data, entity}
   var queue = [];                  // pending camera records
   var creating = false;
@@ -177,16 +177,17 @@
     if (popup) popup.style.display = "none";
   }
 
-  /* ---------------- entity creation (chunked, sequential) ---------------- */
+  /* ---------------- primitive creation (chunked, sequential) ---------------- */
   function addCamera(cam) {
     var isFlock = cam.type === "Flock ALPR";
     var icon = isFlock ? "/static/flock_icon.png"
       : (cam.src === "nc" ? "/static/camera_icon_bright_nc.png" : "/static/camera_icon_bright.png");
-    var ent = dataSource.entities.add({
+    // BillboardCollection picks return this id object through drillPick.
+    var ent = cameraBillboards.add({
       position: Cesium.Cartesian3.fromDegrees(cam.lon, cam.lat, 10.0), // 10m above ground (spec)
-      billboard: {
-        image: icon,
-        scale: isFlock ? 0.7 : 0.6,
+      id: { _worldviewCamId: cam.id, _worldviewCamSrc: cam.src || "nyc" },
+      image: icon,
+      scale: isFlock ? 0.7 : 0.6,
         // GEMINI GOLDEN GOOSE spec: NearFarScalar(1.0e2, 0.8, 5.0e4, 0.2)
         scaleByDistance: new Cesium.NearFarScalar(1.0e2, 0.9, 5.0e4, 0.3),
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
@@ -197,10 +198,7 @@
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         // GEMINI GOLDEN GOOSE spec: cameras cull beyond 50 km (local view only)
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 50000.0),
-      },
     });
-    ent._worldviewCamId = cam.id;   // pick-tag
-    ent._worldviewCamSrc = cam.src || "nyc";
     cameraEntities.push(ent);
     camById[cam.id] = { data: cam, entity: ent };
   }
@@ -386,9 +384,7 @@
     if (!ready()) { setTimeout(init, 250); return; }
     viewer = window.viewer;
 
-    // spec: dedicated CustomDataSource for cameras
-    dataSource = new Cesium.CustomDataSource("cameras");
-    viewer.dataSources.add(dataSource);
+    cameraBillboards = viewer.scene.primitives.add(new Cesium.BillboardCollection());
 
     // chunked creation: 250 entities per rAF tick, never 2,088 at once
     fetch("/api/cameras?src=all")

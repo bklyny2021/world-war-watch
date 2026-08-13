@@ -693,11 +693,15 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
       failIfMajorPerformanceCaveat: false,
       alpha: false,
       depth: true,
-      stencil: true,
+      stencil: false,
       antialias: true,
+      premultipliedAlpha: true,
+      preserveDrawingBuffer: false,
     },
   },
-  requestRenderMode: false,   // smooth continuous frame rate
+  targetFrameRate: 60,
+  requestRenderMode: true,
+  maximumRenderTimeChange: Infinity,
   maximumRenderStateDeferral: 0,
   // v2.0 spec: built-in Cesium FPS readout (top-left, small green text)
   debugShowFramesPerSecond: true,
@@ -736,6 +740,7 @@ viewer.scene.fxaa = true;
 viewer.resolutionScale = 1.0;
 // Fewer imagery tiles per frame (2 -> 4) — less texture upload + fill.
 viewer.scene.globe.maximumScreenSpaceError = 2;   // HIGH-REZ: 2 = Cesium default — loads the sharpest imagery tiles (4 was blurry)
+viewer.scene.globe.tileCacheSize = 1000;
 
 // FPS counter (updates 2x/sec, cheap) — feeds #fpsCounter (status bar) and
 // #hudFps (top-right glassmorphic HUD)
@@ -1553,6 +1558,9 @@ viewer.clock.onTick.addEventListener(() => {
   if (cameraHeight > IDLE_SPIN_MIN_ALT && !isUserInteracting && !viewer.trackedEntity && !viewer.selectedEntity) {
     viewer.scene.camera.rotate(Cesium.Cartesian3.UNIT_Z, -idleSpinRate * 0.01);
   }
+  // requestRenderMode needs an explicit heartbeat for plane interpolation and
+  // idle camera animation when no input event is arriving.
+  if (viewer.scene.requestRenderMode) viewer.scene.requestRender();
 });
 
 /* ============================================================
@@ -2292,9 +2300,9 @@ function wireTrafficToggle() {
 /* ============================================================
    Live Maritime / AIS ship layer
    ============================================================ */
-const shipDataSource = new Cesium.CustomDataSource("ships");
-viewer.dataSources.add(shipDataSource);
-const shipEntities = new Map();   // mmsi -> entity
+const shipBillboards = viewer.scene.primitives.add(new Cesium.BillboardCollection());
+const shipLabels = viewer.scene.primitives.add(new Cesium.LabelCollection());
+const shipEntities = new Map();   // mmsi -> { billboard, label, data }
 window.shipEntities = shipEntities;   // debug/test access
 const shipTails = new Map();      // mmsi -> [Cartesian3]
 let shipLayerReady = false;
@@ -2326,11 +2334,11 @@ function updateShipOcclusion() {
   _shipOccluderLast = nowMs;
   const camPos = viewer.camera.positionWC;
   _shipOccluder.cameraPosition = camPos;
-  const t = viewer.clock.currentTime;
   for (const ent of shipEntities.values()) {
-    const pos = ent._shipPosProp.getValue(t);
-    if (!pos) { ent.show = false; continue; }
-    ent.show = layerState.ships && _shipOccluder.isPointVisible(pos);
+    const pos = ent.billboard.position;
+    if (!pos) { ent.billboard.show = ent.label.show = false; continue; }
+    const show = layerState.ships && _shipOccluder.isPointVisible(pos);
+    ent.billboard.show = ent.label.show = show;
   }
 }
 viewer.scene.postUpdate.addEventListener(updateShipOcclusion);
@@ -2383,7 +2391,9 @@ function shipColor(type) {
   return Cesium.Color.fromCssColorString("#dce1e6");
 }
 
-async function loadShips() {
+// Retained as an inactive reference while the primitive implementation below
+// serves the live layer; it is never invoked.
+async function loadShipsLegacy() {
   try {
     const d = await api("/api/ships");
     const ships = d.ships || [];
@@ -2520,13 +2530,69 @@ async function loadShips() {
   }
 }
 
+// GPU-batched live ship layer. Each marker has a plain id object so drillPick
+// continues to deliver _worldviewShip to the shared click handler.
+async function loadShips() {
+  try {
+    const d = await api("/api/ships");
+    const ships = d.ships || [];
+    const seen = new Set();
+    function finishBatch() {
+      for (const [mmsi, ent] of shipEntities) {
+        if (!seen.has(mmsi)) {
+          shipBillboards.remove(ent.billboard);
+          shipLabels.remove(ent.label);
+          shipEntities.delete(mmsi);
+        }
+      }
+      shipLayerReady = true;
+      _shipOccluderDirty = true;
+      const sc = document.getElementById("shipCount");
+      if (sc) sc.textContent = shipEntities.size;
+    }
+    function updateShip(s) {
+      seen.add(s.mmsi);
+      let ent = shipEntities.get(s.mmsi);
+      if (!ent) {
+        const id = { _worldviewShip: s.mmsi };
+        ent = {
+          billboard: shipBillboards.add({ id, image: getShipIcon(s.type), rotation: Cesium.Math.toRadians(-s.cog), alignedAxis: Cesium.Cartesian3.ZERO, scale: 0.7, scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.8, 2.5e6, 0.08), eyeOffset: new Cesium.Cartesian3(0, 0, 50), disableDepthTestDistance: Number.POSITIVE_INFINITY, verticalOrigin: Cesium.VerticalOrigin.CENTER, distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 2500000.0) }),
+          label: shipLabels.add({ text: (s.name || "").slice(0, 16), font: "11px Cascadia Code, Consolas, monospace", fillColor: Cesium.Color.fromCssColorString("#7dd3fc"), outlineColor: Cesium.Color.fromCssColorString("#000000"), outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(0, -22), distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 300000) }),
+          data: s,
+        };
+        shipEntities.set(s.mmsi, ent);
+      }
+      const position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10);
+      ent.billboard.position = position;
+      ent.label.position = position;
+      ent.billboard.rotation = Cesium.Math.toRadians(-s.cog);
+      ent.label.text = (s.name || "").slice(0, 16);
+      ent.data = s;
+      ent.billboard.show = ent.label.show = layerState.ships;
+    }
+    function batchUpdateEntities(dataArray, updateFn, chunkSize = 200) {
+      let index = 0;
+      function processChunk() {
+        const end = Math.min(index + chunkSize, dataArray.length);
+        for (; index < end; index++) updateFn(dataArray[index]);
+        if (index < dataArray.length) requestAnimationFrame(processChunk);
+        else finishBatch();
+      }
+      processChunk();
+    }
+    batchUpdateEntities(ships, updateShip);
+  } catch (e) {
+    console.log("[worldview] ship layer failed:", e.message);
+  }
+}
+
 function wireShipToggle() {
   const el = document.getElementById("toggleShips");
   if (!el) return;
   el.addEventListener("change", () => {
     layerState.ships = el.checked;
     _shipOccluderDirty = true;   // re-occlude on toggle (show/hide far side)
-    for (const ent of shipEntities.values()) ent.show = el.checked;
+    for (const ent of shipEntities.values()) ent.billboard.show = ent.label.show = el.checked;
   });
 }
 
@@ -2577,13 +2643,13 @@ function wireShipClicks() {
     // find the ship data from the last load
     const ent = shipEntities.get(mmsi);
     if (!ent) return;
-    const pos = ent.position.getValue(Cesium.JulianDate.now());
+    const pos = ent.billboard.position;
     const c = Cesium.Cartographic.fromCartesian(pos);
     // use the full live record stored on the entity (real speed/course/dest)
-    const s = ent._worldviewShipData || {};
+    const s = ent.data || {};
     showShipCard({
       mmsi,
-      name: s.name || (ent.label ? String(ent.label.text.getValue(Cesium.JulianDate.now())) : mmsi),
+      name: s.name || ent.label.text || mmsi,
       type: s.type || "Other",
       lat: Cesium.Math.toDegrees(c.latitude),
       lon: Cesium.Math.toDegrees(c.longitude),
@@ -2729,11 +2795,13 @@ function applyPlaybackStates(states) {
   for (const [mmsi, ent] of shipEntities) {
     const s = ships.get(mmsi);
     if (s) {
-      ent.position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10);
+      const position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10);
+      ent.billboard.position = position;
+      ent.label.position = position;
       ent.billboard.rotation = Cesium.Math.toRadians(-(s.heading || 0));
-      ent.show = true;
+      ent.billboard.show = ent.label.show = true;
     } else {
-      ent.show = false;
+      ent.billboard.show = ent.label.show = false;
     }
   }
   // fires: show only fires present in the snapshot
@@ -2776,7 +2844,7 @@ function setPlaybackMode(on) {
     document.getElementById("liveBadge").innerHTML = '<span class="dot"></span>LIVE&nbsp;ADS-B';
     // restore live: show everything again
     for (const [icao, ent] of entities) ent.show = layerState.flights && (flights.get(icao) ? (flights.get(icao).military ? layerState.military : true) : true);
-    for (const [mmsi, ent] of shipEntities) ent.show = layerState.ships;
+    for (const [mmsi, ent] of shipEntities) ent.billboard.show = ent.label.show = layerState.ships;
     for (const [key, ent] of fireEntities) ent.show = layerState.fires;
   }
 }
