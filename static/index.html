@@ -64,10 +64,15 @@
     padding: 6px 8px; border-radius: 6px; font-family: inherit; font-size: 12px; outline: none; max-width: 200px;
   }
   #btnReset {
-    background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--dim);
-    padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+    display: inline-flex; overflow: hidden; border: 1px solid var(--border); border-radius: 6px;
   }
-  #btnReset:hover { color: var(--text); border-color: var(--accent2); }
+  #btnReset button {
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--dim);
+    padding: 6px 10px; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  #btnReset button + button { border-left: 1px solid var(--border); }
+  #btnReset button:hover, #btnReset .active { color: var(--text); border-color: var(--accent2); }
+  #btnEarth.active { background: rgba(56,189,248,0.16); color: #7dd3fc; }
 
   /* ---------- status ---------- */
   #status {
@@ -429,7 +434,9 @@
   <div id="filterRow">
         <select id="airlineFilter"><option value="">All airlines</option></select>
     <button id="btnCameras" title="Traffic cameras">📷 <span id="btnCamCount">Cams</span></button>
-    <button id="btnReset">Reset view</button>
+    <div id="btnReset" role="group" aria-label="Camera views">
+      <button id="btnResetHome" title="Reset to the default globe view">Reset view</button><button id="btnEarth" title="Toggle a level horizon view">EARTH VIEW</button>
+    </div>
     <div id="shaderGroup" title="Post-process shaders (NVG / FLIR / CRT)">
       <button id="shaderNvg" class="shader-btn">NVG</button>
       <button id="shaderFlir" class="shader-btn">FLIR</button>
@@ -1102,6 +1109,9 @@ let idleSpinRate = 0.0002;       // radians per second — ~1 full turn every fe
 let idleResumeTimer = null;
 const IDLE_RESUME_DELAY = 5000;  // resume rotation 5s after the last interaction
 const IDLE_SPIN_MIN_ALT = 2000000; // only spin above 2,000 km (space view)
+let earthViewActive = false;
+let earthViewPreviousCamera = null;
+let earthViewPreviousTrackedEntity = undefined;
 
 // ---- tactical layer toggles ----
 const layerState = {
@@ -1345,6 +1355,8 @@ function renderSidebar(f) {
     <div class="row"><span class="label">Airline</span><span class="value">${esc(f.airline || "—")}</span></div>
     <div class="row"><span class="label">Flight</span><span class="value hl">${esc(f.callsign)}${f.flight ? " · " + esc(f.flight) : ""}</span></div>
     <div class="row"><span class="label">Aircraft</span><span class="value">${esc(f.model || "—")}${f.typecode ? `<span class="sub">${esc(f.typecode)}</span>` : ""}</span></div>
+    ${origin ? `<div class="row"><span class="label">Origin</span><span class="value">${esc(origin)}</span></div>` : ""}
+    ${dest ? `<div class="row"><span class="label">Destination</span><span class="value">${esc(dest)}</span></div>` : ""}
     <div class="row"><span class="label">Registration</span><span class="value">${esc(f.registration || "—")}</span></div>
     <div class="row"><span class="label">Altitude</span><span class="value">${formatAlt(f.alt_ft)}<span class="sub">${(f.alt_m ?? 0).toLocaleString()} m</span></span></div>
     <div class="row"><span class="label">Groundspeed</span><span class="value">${formatSpeed(f.speed_kt)}</span></div>
@@ -1436,6 +1448,12 @@ async function poll() {
       seen.add(f.icao);
       const prev = flights.get(f.icao);
       const arr = traj.get(f.icao);
+      // Route enrichment arrives separately from the position feed; retain it
+      // when the next poll replaces this flight's live-position object.
+      if (prev) {
+        if (prev.origin) f.origin = prev.origin;
+        if (prev.destination) f.destination = prev.destination;
+      }
       if (prev && arr) {
         if (prev.lat !== f.lat || prev.lon !== f.lon || prev.alt_m !== f.alt_m) {
           arr.push({ lat: prev.lat, lon: prev.lon, alt: prev.alt_m, heading: prev.heading, t: lastFetchTime - POLL_MS / 1000 });
@@ -1608,6 +1626,7 @@ viewer.scene.postUpdate.addEventListener(function () {
         roll: 0
       }
     });
+    if (viewer.scene.requestRenderMode) viewer.scene.requestRender();
   }
 });
 
@@ -1760,8 +1779,40 @@ document.addEventListener("keydown", (e) => {
     if (selectedSat) selectSatellite(null);
   }
 });
-document.getElementById("btnReset").addEventListener("click", () => {
+document.getElementById("btnResetHome").addEventListener("click", () => {
+  earthViewActive = false;
+  earthViewPreviousCamera = null;
+  document.getElementById("btnEarth").classList.remove("active");
   viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(-95, 38, 9000000), duration: 1.2 });
+});
+document.getElementById("btnEarth").addEventListener("click", () => {
+  const button = document.getElementById("btnEarth");
+  if (!earthViewActive) {
+    earthViewPreviousCamera = {
+      destination: Cesium.Cartesian3.clone(viewer.camera.position),
+      heading: viewer.camera.heading,
+      pitch: viewer.camera.pitch,
+      roll: 0,
+    };
+    earthViewPreviousTrackedEntity = viewer.trackedEntity;
+    viewer.trackedEntity = undefined;
+    earthViewActive = true;
+    button.classList.add("active");
+    // Cesium pitch is 0 at the horizon and -90 straight down. A slight
+    // downward angle keeps the Earth's curve visible without looking at it.
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(-95, 38, 35000),
+      orientation: { heading: 0, pitch: Cesium.Math.toRadians(-8), roll: 0 },
+      duration: 1.2,
+    });
+  } else {
+    earthViewActive = false;
+    button.classList.remove("active");
+    if (earthViewPreviousCamera) viewer.camera.flyTo({ ...earthViewPreviousCamera, duration: 1.2 });
+    viewer.trackedEntity = earthViewPreviousTrackedEntity;
+    earthViewPreviousCamera = null;
+    earthViewPreviousTrackedEntity = undefined;
+  }
 });
 document.getElementById("searchBox").addEventListener("input", (e) => {
   currentSearch = e.target.value.trim();
@@ -2629,7 +2680,8 @@ function showShipCard(ship) {
     ["Speed", ship.sog.toFixed(1) + " kn"],
     ["Course", ship.cog.toFixed(0) + "°"],
     ["Heading", ship.heading.toFixed(0) + "°"],
-    ["Destination", ship.destination || "—"],
+    ["Destination", ship.destination || ship.dest || "—"],
+    ...(ship.eta ? [["ETA", ship.eta]] : []),
     ["Dimensions", ship.length ? ship.length + "×" + ship.width + " m" : "—"],
   ];
   document.getElementById("shipRows").innerHTML = rows.map(([k, v]) =>
@@ -2661,7 +2713,8 @@ function wireShipClicks() {
       sog: s.sog || 0,
       cog: s.cog || 0,
       heading: s.heading || 0,
-      destination: s.destination || "",
+      destination: s.destination || s.dest || "",
+      eta: s.eta || "",
       flag: s.flag || "",
       length: s.length || 0,
       width: s.width || 0,
