@@ -983,7 +983,7 @@ viewer.clock.shouldAnimate = true;
 // 1000m floor: photoreal tiles include real building/terrain meshes, so
 // 250m put the camera INSIDE skyscrapers/mountains (the "zoomed into the
 // earth" bug). 1km clears the tallest structures and still reads street-level.
-viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2000.0;
+viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1000.0;
 viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
 viewer.scene.globe.depthTestAgainstTerrain = true;
 
@@ -991,13 +991,16 @@ viewer.scene.globe.depthTestAgainstTerrain = true;
 // photoreal building/terrain meshes = the "dark underground + page
 // unresponsive" state), yank it back up to a safe street view instantly.
 // Wheel zoom can't recover from inside geometry; this self-heals in <1s.
-// 2s cooldown so a recovery flyTo never re-triggers itself mid-flight.
+// Runs on postUpdate (every frame) so it catches ANY camera move — even
+// setView/trackedEntity paths that don't raise camera.changed. 1s cooldown
+// so a recovery flyTo never re-triggers itself mid-flight.
 let _camFloorLast = 0;
-viewer.camera.changed.addEventListener(() => {
+viewer.scene.postUpdate.addEventListener(() => {
+  const now = performance.now();
+  if (now - _camFloorLast < 1000) return;
   try {
     const h = viewer.camera.positionCartographic.height;
-    const now = performance.now();
-    if (h < 300.0 && now - _camFloorLast > 2000) {
+    if (h < 300.0) {
       _camFloorLast = now;
       const c = viewer.camera.positionCartographic;
       viewer.camera.flyTo({

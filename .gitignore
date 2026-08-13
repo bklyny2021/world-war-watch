@@ -18,3 +18,4 @@ last_flights.json
 *.v_working
 *.v1_*
 *.v2_*
+_fix_verify*.png
