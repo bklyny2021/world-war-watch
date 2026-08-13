@@ -1008,14 +1008,19 @@ viewer.scene.postUpdate.addEventListener(() => {
     if (h < 300.0) {
       _camFloorLast = now;
       const c = viewer.camera.positionCartographic;
-      viewer.camera.flyTo({
+      // HARD setView (not flyTo): flyTo tweens can be cancelled by other
+      // camera writes (roll-correction, trackedEntity) and may never
+      // animate under requestRenderMode — verified 2026-08-13 headless
+      // (camera stuck at 50m). setView is instant + uncancellable =
+      // guaranteed recovery in ~1s.
+      viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(
           Cesium.Math.toDegrees(c.longitude),
           Cesium.Math.toDegrees(c.latitude),
           2000.0
         ),
-        duration: 0.8,
       });
+      if (viewer.scene.requestRenderMode) viewer.scene.requestRender();
     }
   } catch (e) { /* camera mid-flight — ignore */ }
 });

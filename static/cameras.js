@@ -190,7 +190,10 @@
       scale: isFlock ? 0.7 : 0.6,
         // GEMINI GOLDEN GOOSE spec: NearFarScalar(1.0e2, 0.8, 5.0e4, 0.2)
         scaleByDistance: new Cesium.NearFarScalar(1.0e2, 0.9, 5.0e4, 0.3),
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        // NONE (was CLAMP_TO_GROUND): BillboardCollection primitives crash
+        // Cesium 1.119's render loop with "reading 'globe'" when clamping —
+        // position is already 10m above the ellipsoid, so it's identical visually
+        heightReference: Cesium.HeightReference.NONE,
         // finite depth bypass (1km): icons stay clickable at street level
         // but occlude properly beyond — no x-ray through buildings/terrain
         // (was POSITIVE_INFINITY = always x-ray)
