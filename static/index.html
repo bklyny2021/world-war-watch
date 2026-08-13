@@ -422,7 +422,7 @@
 <div id="cesiumContainer"></div>
 
 <div id="topbar">
-  <div id="logo">WORLD<span>WAR</span> WATCH<span id="verTag">v2.2</span></div>
+  <div id="logo">WORLD<span>WAR</span> WATCH<span id="verTag">v2.3</span></div>
   <div id="liveBadge"><span class="dot"></span>LIVE&nbsp;ADS-B</div>
   <div id="modeToggle" style="display:flex;gap:4px;margin-left:8px;font-family:Consolas,monospace;font-size:10px;">
     <button id="modeLive" style="background:rgba(0,255,157,0.15);border:1px solid #00ff9d;color:#00ff9d;border-radius:4px;padding:3px 8px;cursor:pointer;">● LIVE</button>
@@ -1224,7 +1224,7 @@ function makeBillboard(f) {
       // PERF: distance culling — don't draw planes beyond 3,000 km
       // (GOLDEN GOOSE: at global zoom nothing draws; far side of Earth is
       // 12,700 km away so planes can never x-ray through the planet)
-      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 3000000.0),
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0),
     },
     label: {
       text: f.callsign,
@@ -1962,7 +1962,7 @@ function makeSatMarker(sat, satrec) {
       verticalOrigin: Cesium.VerticalOrigin.CENTER,
       // GOLDEN GOOSE: only draw satellites within 2,000 km of the viewer
       // (was: always visible — 157 icons x-raying through the planet)
-      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 2000000.0),
+      distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0),
     },
     label: {
       text: sat.name.slice(0, 18),
@@ -2489,7 +2489,10 @@ async function loadShipsLegacy() {
               verticalOrigin: Cesium.VerticalOrigin.CENTER,
               // GEMINI GOLDEN GOOSE spec: ships cull beyond 2,500 km
               // (far side of Earth = 12,700 km away → no x-ray possible)
-              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 2500000.0),
+              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0),
+              // finite depth bypass (2M): near-side ships stay clickable at
+              // street zoom; at global zoom the globe's depth test hides the
+              // far side — "show my hemisphere, load the other as I spin"
             },
             label: {
               text: s.name.slice(0, 16),
@@ -2612,7 +2615,7 @@ async function loadShips() {
       if (!ent) {
         const id = { _worldviewShip: s.mmsi };
         ent = {
-          billboard: shipBillboards.add({ id, image: getShipIcon(s.type), rotation: Cesium.Math.toRadians(-s.cog), alignedAxis: Cesium.Cartesian3.ZERO, scale: 0.7, scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.8, 2.5e6, 0.08), eyeOffset: new Cesium.Cartesian3(0, 0, 50), disableDepthTestDistance: Number.POSITIVE_INFINITY, verticalOrigin: Cesium.VerticalOrigin.CENTER, distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 2500000.0) }),
+          billboard: shipBillboards.add({ id, image: getShipIcon(s.type), rotation: Cesium.Math.toRadians(-s.cog), alignedAxis: Cesium.Cartesian3.ZERO, scale: 0.7, scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.8, 2.5e6, 0.08), eyeOffset: new Cesium.Cartesian3(0, 0, 50), disableDepthTestDistance: 2000000.0, verticalOrigin: Cesium.VerticalOrigin.CENTER, distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0) }),
           label: shipLabels.add({ text: (s.name || "").slice(0, 16), font: "11px Cascadia Code, Consolas, monospace", fillColor: Cesium.Color.fromCssColorString("#7dd3fc"), outlineColor: Cesium.Color.fromCssColorString("#000000"), outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(0, -22), distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 300000) }),
           data: s,
         };
