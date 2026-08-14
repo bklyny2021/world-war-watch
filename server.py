@@ -1424,6 +1424,7 @@ SHIPS_UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
             "X-Requested-With": "XMLHttpRequest"}
 _SHIPS_CACHE = []
 _SHIPS_CACHE_TIME = 0.0
+_SHIPS_CACHE_LOCK = _threading.Lock()   # guards background crawl writes
 _SHIPS_TTL = 60          # refresh every 60s
 _SHIPS_GRID_Z = 3        # zoom level (0 = 1 tile, 3 = 64 tiles)
 
@@ -1655,16 +1656,33 @@ def api_ships():
 
     Priority: AISstream WebSocket cache (live, global) → MarineTraffic crawl
     (cached 60s) → 15-vessel emergency set so the globe is never empty.
+
+    v2.3.1: the MarineTraffic crawl runs on a BACKGROUND thread — this
+    endpoint NEVER blocks for 60s (that stalled the browser's single
+    loadShips() call at boot → "hardly no boats"). Always answers fast.
     """
-    global _SHIPS_CACHE, _SHIPS_CACHE_TIME
+    global _SHIPS_CACHE_TIME
     now = time.time()
     with _ship_cache_lock:
         live = list(ship_cache.values())
     if live:
         return {"ships": live, "time": int(now), "cached": False, "source": "aisstream"}
     if not _SHIPS_CACHE or now - _SHIPS_CACHE_TIME > _SHIPS_TTL:
-        _SHIPS_CACHE = _fetch_ships()
+        # kick the crawl into a background thread, return whatever we have NOW
+        def _crawl():
+            try:
+                fresh = _fetch_ships()
+                with _SHIPS_CACHE_LOCK:
+                    global _SHIPS_CACHE
+                    _SHIPS_CACHE = fresh
+            except Exception:
+                pass
+        with _SHIPS_CACHE_LOCK:
+            stale = list(_SHIPS_CACHE)
+        t = _threading.Thread(target=_crawl, daemon=True)
+        t.start()
         _SHIPS_CACHE_TIME = now
+        return {"ships": stale, "time": int(now), "cached": True, "source": "background-crawl"}
     return {"ships": _SHIPS_CACHE, "time": int(now), "cached": now - _SHIPS_CACHE_TIME > 5, "source": "fallback"}
 
 

@@ -64,15 +64,10 @@
     padding: 6px 8px; border-radius: 6px; font-family: inherit; font-size: 12px; outline: none; max-width: 200px;
   }
   #btnReset {
-    display: inline-flex; overflow: hidden; border: 1px solid var(--border); border-radius: 6px;
-  }
-  #btnReset button {
     background: rgba(255,255,255,0.06); border: 1px solid var(--border); color: var(--dim);
-    padding: 6px 10px; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+    padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
   }
-  #btnReset button + button { border-left: 1px solid var(--border); }
-  #btnReset button:hover, #btnReset .active { color: var(--text); border-color: var(--accent2); }
-  #btnEarth.active { background: rgba(56,189,248,0.16); color: #7dd3fc; }
+  #btnReset:hover { color: var(--text); border-color: var(--accent2); }
 
   /* ---------- status ---------- */
   #status {
@@ -434,9 +429,7 @@
   <div id="filterRow">
         <select id="airlineFilter"><option value="">All airlines</option></select>
     <button id="btnCameras" title="Traffic cameras">📷 <span id="btnCamCount">Cams</span></button>
-    <div id="btnReset" role="group" aria-label="Camera views">
-      <button id="btnResetHome" title="Reset to the default globe view">Reset view</button><button id="btnEarth" title="Toggle a level horizon view">EARTH VIEW</button>
-    </div>
+    <button id="btnReset">Reset view</button><button id="btnEarth" title="Toggle a level horizon view">EARTH VIEW</button>
     <div id="shaderGroup" title="Post-process shaders (NVG / FLIR / CRT)">
       <button id="shaderNvg" class="shader-btn">NVG</button>
       <button id="shaderFlir" class="shader-btn">FLIR</button>
@@ -700,15 +693,11 @@ const viewer = new Cesium.Viewer("cesiumContainer", {
       failIfMajorPerformanceCaveat: false,
       alpha: false,
       depth: true,
-      stencil: false,
+      stencil: true,
       antialias: true,
-      premultipliedAlpha: true,
-      preserveDrawingBuffer: false,
     },
   },
-  targetFrameRate: 60,
-  requestRenderMode: true,
-  maximumRenderTimeChange: Infinity,
+  requestRenderMode: false,   // smooth continuous frame rate
   maximumRenderStateDeferral: 0,
   // v2.0 spec: built-in Cesium FPS readout (top-left, small green text)
   debugShowFramesPerSecond: true,
@@ -747,7 +736,6 @@ viewer.scene.fxaa = true;
 viewer.resolutionScale = 1.0;
 // Fewer imagery tiles per frame (2 -> 4) — less texture upload + fill.
 viewer.scene.globe.maximumScreenSpaceError = 2;   // HIGH-REZ: 2 = Cesium default — loads the sharpest imagery tiles (4 was blurry)
-viewer.scene.globe.tileCacheSize = 1000;
 
 // FPS counter (updates 2x/sec, cheap) — feeds #fpsCounter (status bar) and
 // #hudFps (top-right glassmorphic HUD)
@@ -866,6 +854,13 @@ async function loadGoogleTilesLazy() {
     }
     Cesium.Ion.defaultAccessToken = token;
     const tileset = await Cesium.createGooglePhotorealistic3DTileset();
+    // SSE 16 (not Cesium default 2): the photoreal tileset at SSE 2 tries to
+    // stream thousands of tiles during fast zoom and overflows the render
+    // loop ("RangeError: Invalid array length", rendering stops — verified
+    // by A/B 2026-08-13: SSE 2 = flaky crash, SSE 16 = clean). 16 is the
+    // Google-recommended value for this tileset; street detail still loads
+    // as you approach.
+    tileset.maximumScreenSpaceError = 16;
     viewer.scene.primitives.add(tileset);
     googleTileset = tileset;
     googleTilesLoaded = true;
@@ -1017,9 +1012,8 @@ viewer.scene.postUpdate.addEventListener(() => {
       const c = viewer.camera.positionCartographic;
       // HARD setView (not flyTo): flyTo tweens can be cancelled by other
       // camera writes (roll-correction, trackedEntity) and may never
-      // animate under requestRenderMode — verified 2026-08-13 headless
-      // (camera stuck at 50m). setView is instant + uncancellable =
-      // guaranteed recovery in ~1s.
+      // animate — verified 2026-08-13 (camera stuck at 50m). setView is
+      // instant + uncancellable = guaranteed recovery in ~1s.
       viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(
           Cesium.Math.toDegrees(c.longitude),
@@ -1027,7 +1021,6 @@ viewer.scene.postUpdate.addEventListener(() => {
           2000.0
         ),
       });
-      if (viewer.scene.requestRenderMode) viewer.scene.requestRender();
     }
   } catch (e) { /* camera mid-flight — ignore */ }
 });
@@ -1109,9 +1102,6 @@ let idleSpinRate = 0.0002;       // radians per second — ~1 full turn every fe
 let idleResumeTimer = null;
 const IDLE_RESUME_DELAY = 5000;  // resume rotation 5s after the last interaction
 const IDLE_SPIN_MIN_ALT = 2000000; // only spin above 2,000 km (space view)
-let earthViewActive = false;
-let earthViewPreviousCamera = null;
-let earthViewPreviousTrackedEntity = undefined;
 
 // ---- tactical layer toggles ----
 const layerState = {
@@ -1355,8 +1345,6 @@ function renderSidebar(f) {
     <div class="row"><span class="label">Airline</span><span class="value">${esc(f.airline || "—")}</span></div>
     <div class="row"><span class="label">Flight</span><span class="value hl">${esc(f.callsign)}${f.flight ? " · " + esc(f.flight) : ""}</span></div>
     <div class="row"><span class="label">Aircraft</span><span class="value">${esc(f.model || "—")}${f.typecode ? `<span class="sub">${esc(f.typecode)}</span>` : ""}</span></div>
-    ${origin ? `<div class="row"><span class="label">Origin</span><span class="value">${esc(origin)}</span></div>` : ""}
-    ${dest ? `<div class="row"><span class="label">Destination</span><span class="value">${esc(dest)}</span></div>` : ""}
     <div class="row"><span class="label">Registration</span><span class="value">${esc(f.registration || "—")}</span></div>
     <div class="row"><span class="label">Altitude</span><span class="value">${formatAlt(f.alt_ft)}<span class="sub">${(f.alt_m ?? 0).toLocaleString()} m</span></span></div>
     <div class="row"><span class="label">Groundspeed</span><span class="value">${formatSpeed(f.speed_kt)}</span></div>
@@ -1448,12 +1436,6 @@ async function poll() {
       seen.add(f.icao);
       const prev = flights.get(f.icao);
       const arr = traj.get(f.icao);
-      // Route enrichment arrives separately from the position feed; retain it
-      // when the next poll replaces this flight's live-position object.
-      if (prev) {
-        if (prev.origin) f.origin = prev.origin;
-        if (prev.destination) f.destination = prev.destination;
-      }
       if (prev && arr) {
         if (prev.lat !== f.lat || prev.lon !== f.lon || prev.alt_m !== f.alt_m) {
           arr.push({ lat: prev.lat, lon: prev.lon, alt: prev.alt_m, heading: prev.heading, t: lastFetchTime - POLL_MS / 1000 });
@@ -1470,6 +1452,12 @@ async function poll() {
         }
       } else if (!arr) {
         traj.set(f.icao, []);
+      }
+      // v2.3: retain route enrichment (origin/destination) when the next
+      // poll replaces this flight's live-position object.
+      if (prev) {
+        if (prev.origin) f.origin = prev.origin;
+        if (prev.destination) f.destination = prev.destination;
       }
       flights.set(f.icao, f);
 
@@ -1581,9 +1569,6 @@ viewer.clock.onTick.addEventListener(() => {
   if (cameraHeight > IDLE_SPIN_MIN_ALT && !isUserInteracting && !viewer.trackedEntity && !viewer.selectedEntity) {
     viewer.scene.camera.rotate(Cesium.Cartesian3.UNIT_Z, -idleSpinRate * 0.01);
   }
-  // requestRenderMode needs an explicit heartbeat for plane interpolation and
-  // idle camera animation when no input event is arriving.
-  if (viewer.scene.requestRenderMode) viewer.scene.requestRender();
 });
 
 /* ============================================================
@@ -1626,7 +1611,6 @@ viewer.scene.postUpdate.addEventListener(function () {
         roll: 0
       }
     });
-    if (viewer.scene.requestRenderMode) viewer.scene.requestRender();
   }
 });
 
@@ -1779,12 +1763,19 @@ document.addEventListener("keydown", (e) => {
     if (selectedSat) selectSatellite(null);
   }
 });
-document.getElementById("btnResetHome").addEventListener("click", () => {
+document.getElementById("btnReset").addEventListener("click", () => {
   earthViewActive = false;
   earthViewPreviousCamera = null;
   document.getElementById("btnEarth").classList.remove("active");
   viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(-95, 38, 9000000), duration: 1.2 });
 });
+// EARTH VIEW — flat horizon view ("how it looks to someone on earth").
+// Integrated next to Reset view (no new screen space). Toggle back restores
+// the previous camera. Cancels any in-flight autopilot flyTo (WWW bot /
+// boot hot-zone focus) and keeps them from re-flying while active.
+let earthViewActive = false;
+let earthViewPreviousCamera = null;
+let earthViewPreviousTrackedEntity = undefined;
 document.getElementById("btnEarth").addEventListener("click", () => {
   const button = document.getElementById("btnEarth");
   if (!earthViewActive) {
@@ -1798,13 +1789,25 @@ document.getElementById("btnEarth").addEventListener("click", () => {
     viewer.trackedEntity = undefined;
     earthViewActive = true;
     button.classList.add("active");
+    try { viewer.camera.cancelFlight(); } catch (e) {}
+    wwwHotZoneFirst = false;
     // Cesium pitch is 0 at the horizon and -90 straight down. A slight
     // downward angle keeps the Earth's curve visible without looking at it.
-    viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(-95, 38, 35000),
-      orientation: { heading: 0, pitch: Cesium.Math.toRadians(-8), roll: 0 },
-      duration: 1.2,
-    });
+    const evDest = Cesium.Cartesian3.fromDegrees(-95, 38, 150000);
+    const evOrient = { heading: 0, pitch: Cesium.Math.toRadians(-8), roll: 0 };
+    viewer.camera.flyTo({ destination: evDest, orientation: evOrient, duration: 1.2 });
+    // RE-ASSERT: an autopilot flyTo already in Cesium's terrain-wait phase
+    // (boot hot-zone focus) can start AFTER our flyTo and steal the camera —
+    // cancelFlight can't stop a flight that hasn't begun animating. Snap
+    // back to Earth View 2s later if anything drifted us (verified 2026-08-13).
+    setTimeout(() => {
+      if (earthViewActive) {
+        const h = viewer.camera.positionCartographic.height;
+        if (h > 100000 || Math.abs(viewer.camera.pitch - Cesium.Math.toRadians(-8)) > 0.2) {
+          viewer.camera.setView({ destination: evDest, orientation: evOrient });
+        }
+      }
+    }, 2000);
   } else {
     earthViewActive = false;
     button.classList.remove("active");
@@ -2356,9 +2359,9 @@ function wireTrafficToggle() {
 /* ============================================================
    Live Maritime / AIS ship layer
    ============================================================ */
-const shipBillboards = viewer.scene.primitives.add(new Cesium.BillboardCollection());
-const shipLabels = viewer.scene.primitives.add(new Cesium.LabelCollection());
-const shipEntities = new Map();   // mmsi -> { billboard, label, data }
+const shipDataSource = new Cesium.CustomDataSource("ships");
+viewer.dataSources.add(shipDataSource);
+const shipEntities = new Map();   // mmsi -> entity
 window.shipEntities = shipEntities;   // debug/test access
 const shipTails = new Map();      // mmsi -> [Cartesian3]
 let shipLayerReady = false;
@@ -2390,11 +2393,11 @@ function updateShipOcclusion() {
   _shipOccluderLast = nowMs;
   const camPos = viewer.camera.positionWC;
   _shipOccluder.cameraPosition = camPos;
+  const t = viewer.clock.currentTime;
   for (const ent of shipEntities.values()) {
-    const pos = ent.billboard.position;
-    if (!pos) { ent.billboard.show = ent.label.show = false; continue; }
-    const show = layerState.ships && _shipOccluder.isPointVisible(pos);
-    ent.billboard.show = ent.label.show = show;
+    const pos = ent._shipPosProp.getValue(t);
+    if (!pos) { ent.show = false; continue; }
+    ent.show = layerState.ships && _shipOccluder.isPointVisible(pos);
   }
 }
 viewer.scene.postUpdate.addEventListener(updateShipOcclusion);
@@ -2447,9 +2450,7 @@ function shipColor(type) {
   return Cesium.Color.fromCssColorString("#dce1e6");
 }
 
-// Retained as an inactive reference while the primitive implementation below
-// serves the live layer; it is never invoked.
-async function loadShipsLegacy() {
+async function loadShips() {
   try {
     const d = await api("/api/ships");
     const ships = d.ships || [];
@@ -2490,9 +2491,6 @@ async function loadShipsLegacy() {
               // GEMINI GOLDEN GOOSE spec: ships cull beyond 2,500 km
               // (far side of Earth = 12,700 km away → no x-ray possible)
               distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0),
-              // finite depth bypass (2M): near-side ships stay clickable at
-              // street zoom; at global zoom the globe's depth test hides the
-              // far side — "show my hemisphere, load the other as I spin"
             },
             label: {
               text: s.name.slice(0, 16),
@@ -2589,69 +2587,13 @@ async function loadShipsLegacy() {
   }
 }
 
-// GPU-batched live ship layer. Each marker has a plain id object so drillPick
-// continues to deliver _worldviewShip to the shared click handler.
-async function loadShips() {
-  try {
-    const d = await api("/api/ships");
-    const ships = d.ships || [];
-    const seen = new Set();
-    function finishBatch() {
-      for (const [mmsi, ent] of shipEntities) {
-        if (!seen.has(mmsi)) {
-          shipBillboards.remove(ent.billboard);
-          shipLabels.remove(ent.label);
-          shipEntities.delete(mmsi);
-        }
-      }
-      shipLayerReady = true;
-      _shipOccluderDirty = true;
-      const sc = document.getElementById("shipCount");
-      if (sc) sc.textContent = shipEntities.size;
-    }
-    function updateShip(s) {
-      seen.add(s.mmsi);
-      let ent = shipEntities.get(s.mmsi);
-      if (!ent) {
-        const id = { _worldviewShip: s.mmsi };
-        ent = {
-          billboard: shipBillboards.add({ id, image: getShipIcon(s.type), rotation: Cesium.Math.toRadians(-s.cog), alignedAxis: Cesium.Cartesian3.ZERO, scale: 0.7, scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.8, 2.5e6, 0.08), eyeOffset: new Cesium.Cartesian3(0, 0, 50), disableDepthTestDistance: 2000000.0, verticalOrigin: Cesium.VerticalOrigin.CENTER, distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 20000000.0) }),
-          label: shipLabels.add({ text: (s.name || "").slice(0, 16), font: "11px Cascadia Code, Consolas, monospace", fillColor: Cesium.Color.fromCssColorString("#7dd3fc"), outlineColor: Cesium.Color.fromCssColorString("#000000"), outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(0, -22), distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 300000) }),
-          data: s,
-        };
-        shipEntities.set(s.mmsi, ent);
-      }
-      const position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10);
-      ent.billboard.position = position;
-      ent.label.position = position;
-      ent.billboard.rotation = Cesium.Math.toRadians(-s.cog);
-      ent.label.text = (s.name || "").slice(0, 16);
-      ent.data = s;
-      ent.billboard.show = ent.label.show = layerState.ships;
-    }
-    function batchUpdateEntities(dataArray, updateFn, chunkSize = 200) {
-      let index = 0;
-      function processChunk() {
-        const end = Math.min(index + chunkSize, dataArray.length);
-        for (; index < end; index++) updateFn(dataArray[index]);
-        if (index < dataArray.length) requestAnimationFrame(processChunk);
-        else finishBatch();
-      }
-      processChunk();
-    }
-    batchUpdateEntities(ships, updateShip);
-  } catch (e) {
-    console.log("[worldview] ship layer failed:", e.message);
-  }
-}
-
 function wireShipToggle() {
   const el = document.getElementById("toggleShips");
   if (!el) return;
   el.addEventListener("change", () => {
     layerState.ships = el.checked;
     _shipOccluderDirty = true;   // re-occlude on toggle (show/hide far side)
-    for (const ent of shipEntities.values()) ent.billboard.show = ent.label.show = el.checked;
+    for (const ent of shipEntities.values()) ent.show = el.checked;
   });
 }
 
@@ -2703,21 +2645,20 @@ function wireShipClicks() {
     // find the ship data from the last load
     const ent = shipEntities.get(mmsi);
     if (!ent) return;
-    const pos = ent.billboard.position;
+    const pos = ent.position.getValue(Cesium.JulianDate.now());
     const c = Cesium.Cartographic.fromCartesian(pos);
     // use the full live record stored on the entity (real speed/course/dest)
-    const s = ent.data || {};
+    const s = ent._worldviewShipData || {};
     showShipCard({
       mmsi,
-      name: s.name || ent.label.text || mmsi,
+      name: s.name || (ent.label ? String(ent.label.text.getValue(Cesium.JulianDate.now())) : mmsi),
       type: s.type || "Other",
       lat: Cesium.Math.toDegrees(c.latitude),
       lon: Cesium.Math.toDegrees(c.longitude),
       sog: s.sog || 0,
       cog: s.cog || 0,
       heading: s.heading || 0,
-      destination: s.destination || s.dest || "",
-      eta: s.eta || "",
+      destination: s.destination || "",
       flag: s.flag || "",
       length: s.length || 0,
       width: s.width || 0,
@@ -2856,13 +2797,11 @@ function applyPlaybackStates(states) {
   for (const [mmsi, ent] of shipEntities) {
     const s = ships.get(mmsi);
     if (s) {
-      const position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10);
-      ent.billboard.position = position;
-      ent.label.position = position;
+      ent.position = Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10);
       ent.billboard.rotation = Cesium.Math.toRadians(-(s.heading || 0));
-      ent.billboard.show = ent.label.show = true;
+      ent.show = true;
     } else {
-      ent.billboard.show = ent.label.show = false;
+      ent.show = false;
     }
   }
   // fires: show only fires present in the snapshot
@@ -2905,7 +2844,7 @@ function setPlaybackMode(on) {
     document.getElementById("liveBadge").innerHTML = '<span class="dot"></span>LIVE&nbsp;ADS-B';
     // restore live: show everything again
     for (const [icao, ent] of entities) ent.show = layerState.flights && (flights.get(icao) ? (flights.get(icao).military ? layerState.military : true) : true);
-    for (const [mmsi, ent] of shipEntities) ent.billboard.show = ent.label.show = layerState.ships;
+    for (const [mmsi, ent] of shipEntities) ent.show = layerState.ships;
     for (const [key, ent] of fireEntities) ent.show = layerState.fires;
   }
 }
@@ -3092,6 +3031,13 @@ viewer.camera.changed.addEventListener(() => {
   //    views — their labels/tails are distance-culled anyway)
   // 4) cameras only show at street level (applyAltitudeShow in cameras.js)
   loadShips();
+  // v2.3: ships refresh every 60s (real courses on the map over time) +
+  // retry every 15s while the layer is still empty (a slow first response
+  // used to mean "no boats" until the next page load).
+  setInterval(() => {
+    if (!shipLayerReady || window.shipEntities.size === 0) loadShips();
+  }, 15000);
+  setInterval(() => { if (shipLayerReady) loadShips(); }, 60000);
   loadSatellites();
   loadFires();
   loadHurricanes();
@@ -3717,7 +3663,7 @@ async function focusHotZone(announce) {
     }
     // BOOT ONLY: fly to the #1 spot once. After that, no camera movement —
     // the red bot decides when a big event is worth moving for.
-    if (wwwHotZoneFirst) {
+    if (wwwHotZoneFirst && !earthViewActive) {
       wwwHotZoneFirst = false;
       wwwHotZoneId = id;
       viewer.camera.flyTo({
@@ -4162,7 +4108,7 @@ async function wwwBotPatrol() {
       return;
     }
     // only switch when a DIFFERENT war is WAY hotter (>= 1.5x score)
-    if (id !== wwwBotCurrentZoneId && score >= wwwBotCurrentScore * 1.5) {
+    if (id !== wwwBotCurrentZoneId && score >= wwwBotCurrentScore * 1.5 && !earthViewActive) {
       wwwBotCurrentZoneId = id;
       wwwBotCurrentScore = score;
       window.wwwBotActive.currentZone = z.name || id;

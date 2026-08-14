@@ -17,8 +17,8 @@
   var REFRESH_MS = 5000;           // popup image refresh interval (spec: 5s)
 
   var viewer = null;               // Cesium viewer (window.viewer)
-  var cameraBillboards = null;     // GPU-batched camera markers
-  var cameraEntities = [];         // billboard per camera (legacy name kept)
+  var dataSource = null;           // Cesium.CustomDataSource for cameras
+  var cameraEntities = [];         // entity per camera
   var camById = {};                // id -> {data, entity}
   var queue = [];                  // pending camera records
   var creating = false;
@@ -177,23 +177,19 @@
     if (popup) popup.style.display = "none";
   }
 
-  /* ---------------- primitive creation (chunked, sequential) ---------------- */
+  /* ---------------- entity creation (chunked, sequential) ---------------- */
   function addCamera(cam) {
     var isFlock = cam.type === "Flock ALPR";
     var icon = isFlock ? "/static/flock_icon.png"
       : (cam.src === "nc" ? "/static/camera_icon_bright_nc.png" : "/static/camera_icon_bright.png");
-    // BillboardCollection picks return this id object through drillPick.
-    var ent = cameraBillboards.add({
+    var ent = dataSource.entities.add({
       position: Cesium.Cartesian3.fromDegrees(cam.lon, cam.lat, 10.0), // 10m above ground (spec)
-      id: { _worldviewCamId: cam.id, _worldviewCamSrc: cam.src || "nyc" },
-      image: icon,
-      scale: isFlock ? 0.7 : 0.6,
+      billboard: {
+        image: icon,
+        scale: isFlock ? 0.7 : 0.6,
         // GEMINI GOLDEN GOOSE spec: NearFarScalar(1.0e2, 0.8, 5.0e4, 0.2)
         scaleByDistance: new Cesium.NearFarScalar(1.0e2, 0.9, 5.0e4, 0.3),
-        // NONE (was CLAMP_TO_GROUND): BillboardCollection primitives crash
-        // Cesium 1.119's render loop with "reading 'globe'" when clamping —
-        // position is already 10m above the ellipsoid, so it's identical visually
-        heightReference: Cesium.HeightReference.NONE,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         // finite depth bypass (1km): icons stay clickable at street level
         // but occlude properly beyond — no x-ray through buildings/terrain
         // (was POSITIVE_INFINITY = always x-ray)
@@ -201,7 +197,10 @@
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         // GEMINI GOLDEN GOOSE spec: cameras cull beyond 50 km (local view only)
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 50000.0),
+      },
     });
+    ent._worldviewCamId = cam.id;   // pick-tag
+    ent._worldviewCamSrc = cam.src || "nyc";
     cameraEntities.push(ent);
     camById[cam.id] = { data: cam, entity: ent };
   }
@@ -387,7 +386,9 @@
     if (!ready()) { setTimeout(init, 250); return; }
     viewer = window.viewer;
 
-    cameraBillboards = viewer.scene.primitives.add(new Cesium.BillboardCollection());
+    // spec: dedicated CustomDataSource for cameras
+    dataSource = new Cesium.CustomDataSource("cameras");
+    viewer.dataSources.add(dataSource);
 
     // chunked creation: 250 entities per rAF tick, never 2,088 at once
     fetch("/api/cameras?src=all")

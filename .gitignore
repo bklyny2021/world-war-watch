@@ -19,3 +19,17 @@ last_flights.json
 *.v1_*
 *.v2_*
 _fix_verify*.png
+# Sarah's ad-hoc verification/diag scratch (session 2026-08-13)
+_v23_*.js
+_v23_*.png
+_coney_check.*
+_earth_diag.js
+_render_diag.js
+_trap_diag.js
+_seq_diag.js
+_bisect_*.js
+_ab_*.js
+_ships_check.json
+_cams_check.json
+_fix_verify*.js
+_fix_verify*.png
