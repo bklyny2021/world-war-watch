@@ -1,9 +1,11 @@
 # World War Watch (WWW)
 
+> **⚠️ BETA** — this app is in active development. Data feeds, features, and the installer are being tested and improved continuously. Expect changes between versions.
+
 **Real-time global tracking — flights, ships, fires, hotspots, live streams.**
 A CesiumJS 3D globe + Python server. Everything on screen is REAL data from live feeds — nothing simulated, ever.
 
-Current version: **v2.3.1** (in development) · Previous: v2.3 (snapshot in `backup\WorldWarWatch_v2_3\`)
+Current version: **v2.3.1 (BETA)** · Previous: v2.3 (snapshot in `backup\WorldWarWatch_v2_3\`)
 
 ---
 
