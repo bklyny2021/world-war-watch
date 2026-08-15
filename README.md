@@ -216,13 +216,12 @@ It writes to `worldview_archive.db` (30-day retention). When you start the app, 
 
 ### Step 9 — (Optional) Build the EXE
 
+Use the spec file (it bundles ALL uvicorn + anyio submodules — the plain
+`--hidden-import` flags crash the frozen EXE with `ModuleNotFoundError:
+uvicorn.loops.auto` / `anyio._backends`):
+
 ```
-python -m PyInstaller --noconfirm --clean --onefile --windowed \
-  --name WorldWarWatch_v2_3_1 --icon WorldView.ico \
-  --add-data "data/aircraftDatabase.csv;data" \
-  --add-data "data/airports.dat;data" \
-  --add-data "data/labels_10m.json;data" \
-  --add-data "static;static" server.py
+python -m PyInstaller --noconfirm --clean www_v2_3_1.spec
 ```
 
 The EXE lands in `dist\WorldWarWatch_v2_3_1.exe`. Put `data\` (ion token, creds, admin pin) next to the EXE.
