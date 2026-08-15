@@ -2459,6 +2459,359 @@ def _open_browser_when_ready(port, timeout=45):
     threading.Thread(target=wait_and_open, daemon=True).start()
 
 
+# ---------------------------------------------------------------- Admin news swarm (v2.3.1)
+# This feature is intentionally self-contained: the browser only starts a job
+# and polls it; all fetching/parsing happens in daemon background threads.
+import datetime as _swarm_datetime
+import html as _swarm_html
+import hmac as _swarm_hmac
+import secrets as _swarm_secrets
+import threading as _swarm_threading
+import urllib.parse as _swarm_parse
+import xml.etree.ElementTree as _swarm_xml
+from email.utils import parsedate_to_datetime as _swarm_rss_date
+
+from fastapi import HTTPException as _SwarmHTTPException, Request as _SwarmRequest
+
+_ADMIN_PIN_FILE = DATA_DIR / "admin_pin.json"
+_NEWS_SWARM_HISTORY_FILE = DATA_DIR / "news_swarm_history.json"
+_NEWS_SWARM_LOCK = _swarm_threading.Lock()
+_NEWS_SWARMS = {}
+_NEWS_SWARM_TOKENS = set()
+
+
+def _swarm_now():
+    return _swarm_datetime.datetime.now(_swarm_datetime.timezone.utc).isoformat()
+
+
+def _swarm_load_pin():
+    try:
+        with _ADMIN_PIN_FILE.open("r", encoding="utf-8") as handle:
+            return str(json.load(handle).get("pin", ""))
+    except Exception:
+        return ""
+
+
+def _swarm_require_admin(request):
+    token = request.headers.get("x-admin-token", "")
+    with _NEWS_SWARM_LOCK:
+        allowed = token in _NEWS_SWARM_TOKENS
+    if not allowed:
+        raise _SwarmHTTPException(status_code=403, detail="Admin authorization required")
+
+
+def _swarm_text(value):
+    return _swarm_html.unescape(str(value or "")).replace("\n", " ").strip()
+
+
+def _swarm_published(value):
+    """Return sortable, consistent UTC ISO timestamps without inventing dates."""
+    if not value:
+        return ""
+    value = str(value).strip()
+    try:
+        if value.endswith("Z"):
+            return _swarm_datetime.datetime.fromisoformat(value[:-1] + "+00:00").isoformat()
+        parsed = _swarm_datetime.datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_swarm_datetime.timezone.utc)
+        return parsed.astimezone(_swarm_datetime.timezone.utc).isoformat()
+    except ValueError:
+        try:
+            parsed = _swarm_rss_date(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=_swarm_datetime.timezone.utc)
+            return parsed.astimezone(_swarm_datetime.timezone.utc).isoformat()
+        except (TypeError, ValueError):
+            return value
+
+
+def _swarm_item(source, title, url, published="", snippet=""):
+    url = str(url or "").strip()
+    title = _swarm_text(title)
+    if not url or not title:
+        return None
+    return {"source": source, "title": title, "url": url,
+            "published": _swarm_published(published), "snippet": _swarm_text(snippet)}
+
+
+def _swarm_fetch(url):
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "WorldWarWatch/2.3.1 news capture (+local admin tool)",
+        "Accept": "application/rss+xml, application/json, text/xml, */*",
+    })
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return response.read()
+
+
+def _swarm_rss(url):
+    source = "Bing News RSS" if "bing.com" in url else "Google News RSS"
+    root = _swarm_xml.fromstring(_swarm_fetch(url))
+    results = []
+    for item in root.findall(".//item")[:10]:
+        result = _swarm_item(source, item.findtext("title"), item.findtext("link"),
+                             item.findtext("pubDate"), item.findtext("description"))
+        if result:
+            results.append(result)
+    return results
+
+
+def _swarm_reddit(url):
+    payload = json.loads(_swarm_fetch(url).decode("utf-8"))
+    results = []
+    for child in payload.get("data", {}).get("children", [])[:10]:
+        post = child.get("data", {})
+        link = post.get("url") or ("https://www.reddit.com" + post.get("permalink", ""))
+        published = _swarm_datetime.datetime.fromtimestamp(
+            float(post.get("created_utc", 0) or 0), _swarm_datetime.timezone.utc
+        ).isoformat() if post.get("created_utc") else ""
+        result = _swarm_item("Reddit", post.get("title"), link, published,
+                             post.get("selftext") or post.get("subreddit_name_prefixed", ""))
+        if result:
+            results.append(result)
+    return results
+
+
+def _swarm_hacker_news(url):
+    payload = json.loads(_swarm_fetch(url).decode("utf-8"))
+    results = []
+    for hit in payload.get("hits", [])[:10]:
+        link = hit.get("url") or ("https://news.ycombinator.com/item?id=" + str(hit.get("objectID", "")))
+        result = _swarm_item("Hacker News", hit.get("title") or hit.get("story_title"),
+                             link, hit.get("created_at"), hit.get("story_text") or hit.get("comment_text", ""))
+        if result:
+            results.append(result)
+    return results
+
+
+def _swarm_gdelt(url):
+    payload = json.loads(_swarm_fetch(url).decode("utf-8"))
+    results = []
+    for article in payload.get("articles", [])[:10]:
+        result = _swarm_item("GDELT", article.get("title"), article.get("url"),
+                             article.get("seendate"), article.get("domain", ""))
+        if result:
+            # GDELT returns a "location" field like "Lat 18.0 Lon -155.2"
+            # (or "Lat 18.0, Lon -155.2") — parse it so the frontend can
+            # place a red circle on the globe for this result.
+            loc = str(article.get("location") or "")
+            m = _re.search(r"Lat\s+(-?\d+(?:\.\d+)?)[,\s]+Lon\s+(-?\d+(?:\.\d+)?)", loc, _re.I)
+            if m:
+                try:
+                    result["lat"] = float(m.group(1))
+                    result["lon"] = float(m.group(2))
+                except ValueError:
+                    pass
+            results.append(result)
+    return results
+
+
+def _swarm_collect(swarm_id, source, collector, url):
+    try:
+        items, error = collector(url), ""
+    except Exception as exc:
+        items, error = [], f"{type(exc).__name__}: {exc}"
+    with _NEWS_SWARM_LOCK:
+        swarm = _NEWS_SWARMS.get(swarm_id)
+        if swarm:
+            swarm["agents"][source] = {"finished": True, "count": len(items), "error": error}
+            swarm["raw_results"].extend(items)
+
+
+def _swarm_save_history(capture):
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        history = []
+        if _NEWS_SWARM_HISTORY_FILE.exists():
+            with _NEWS_SWARM_HISTORY_FILE.open("r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, list):
+                history = loaded
+        history.append(capture)
+        with _NEWS_SWARM_HISTORY_FILE.open("w", encoding="utf-8") as handle:
+            json.dump(history, handle, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        print(f"[worldview] news swarm history save error: {exc}")
+
+
+def _swarm_run(swarm_id, topic):
+    encoded = _swarm_parse.quote_plus(topic)
+    jobs = [
+        ("Google News RSS", _swarm_rss, f"https://news.google.com/rss/search?q={encoded}"),
+        ("Bing News RSS", _swarm_rss, f"https://www.bing.com/news/search?q={encoded}&format=rss"),
+        ("Reddit", _swarm_reddit, f"https://www.reddit.com/search.json?q={encoded}&limit=10"),
+        ("Hacker News", _swarm_hacker_news, f"https://hn.algolia.com/api/v1/search?query={encoded}&tags=story"),
+        ("GDELT", _swarm_gdelt, f"https://api.gdeltproject.org/api/v2/doc/doc?query={encoded}&mode=artlist&maxrecords=10&format=json"),
+    ]
+    workers = [_swarm_threading.Thread(target=_swarm_collect, args=(swarm_id, *job), daemon=True)
+               for job in jobs]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    with _NEWS_SWARM_LOCK:
+        swarm = _NEWS_SWARMS.get(swarm_id)
+        if not swarm:
+            return
+        unique = {}
+        for result in swarm.pop("raw_results", []):
+            unique.setdefault(result["url"], result)
+        swarm["results"] = sorted(unique.values(), key=lambda result: result["published"], reverse=True)
+        swarm["running"] = False
+        swarm["finished_at"] = _swarm_now()
+        capture = {key: swarm[key] for key in ("id", "topic", "started_at", "finished_at", "results")}
+    _swarm_save_history(capture)
+
+
+@app.post("/api/admin/verify")
+async def admin_verify(request: _SwarmRequest):
+    try:
+        pin = str((await request.json()).get("pin", ""))
+    except Exception:
+        raise _SwarmHTTPException(status_code=400, detail="JSON body with PIN required")
+    stored_pin = _swarm_load_pin()
+    if not stored_pin or not _swarm_hmac.compare_digest(pin, stored_pin):
+        raise _SwarmHTTPException(status_code=403, detail="Incorrect admin PIN")
+    token = _swarm_secrets.token_urlsafe(32)
+    with _NEWS_SWARM_LOCK:
+        _NEWS_SWARM_TOKENS.add(token)
+    return {"verified": True, "token": token}
+
+
+@app.post("/api/admin/swarm")
+async def admin_release_swarm(request: _SwarmRequest):
+    _swarm_require_admin(request)
+    try:
+        topic = str((await request.json()).get("topic", "")).strip()
+    except Exception:
+        raise _SwarmHTTPException(status_code=400, detail="JSON body with topic required")
+    if not topic or len(topic) > 240:
+        raise _SwarmHTTPException(status_code=400, detail="Topic must be 1-240 characters")
+    swarm_id = _swarm_secrets.token_urlsafe(12)
+    with _NEWS_SWARM_LOCK:
+        _NEWS_SWARMS[swarm_id] = {
+            "id": swarm_id, "topic": topic, "started_at": _swarm_now(), "finished_at": None,
+            "running": True, "results": [], "raw_results": [],
+            "agents": {source: {"finished": False, "count": 0, "error": ""} for source in
+                       ("Google News RSS", "Bing News RSS", "Reddit", "Hacker News", "GDELT")},
+        }
+    _swarm_threading.Thread(target=_swarm_run, args=(swarm_id, topic), daemon=True).start()
+    return {"swarm_id": swarm_id}
+
+
+@app.get("/api/admin/swarm_status")
+def admin_swarm_status(request: _SwarmRequest, swarm_id: str):
+    _swarm_require_admin(request)
+    with _NEWS_SWARM_LOCK:
+        swarm = _NEWS_SWARMS.get(swarm_id)
+        if not swarm:
+            raise _SwarmHTTPException(status_code=404, detail="Unknown swarm")
+        return {key: value for key, value in swarm.items() if key != "raw_results"}
+
+
+@app.get("/api/admin/news_history")
+def admin_news_history(request: _SwarmRequest):
+    _swarm_require_admin(request)
+    try:
+        with _NEWS_SWARM_HISTORY_FILE.open("r", encoding="utf-8") as handle:
+            history = json.load(handle)
+        return {"captures": history if isinstance(history, list) else []}
+    except FileNotFoundError:
+        return {"captures": []}
+    except Exception as exc:
+        raise _SwarmHTTPException(status_code=500, detail=f"History read error: {exc}")
+
+
+# ---------------------------------------------------------------- Offline recorder archive import (v2.3.1)
+# These routes deliberately reuse the existing admin token verifier.  Archive
+# I/O and deduplication happen entirely server-side; the browser never parses
+# or iterates telemetry rows.
+_ARCHIVE_DB = APP_DIR / "worldview_archive.db"
+
+
+def _archive_telemetry_columns(conn):
+    return {row[1] for row in conn.execute("PRAGMA table_info(telemetry)")}
+
+
+def _archive_rows(conn):
+    columns = _archive_telemetry_columns(conn)
+    needed = {"entity_id", "entity_type", "lat", "lon", "alt", "heading", "speed", "timestamp"}
+    if not needed.issubset(columns):
+        missing = ", ".join(sorted(needed - columns))
+        raise ValueError(f"archive telemetry schema is missing: {missing}")
+    return conn.execute(
+        "SELECT entity_id, entity_type, lat, lon, alt, heading, speed, timestamp "
+        "FROM telemetry ORDER BY timestamp"
+    ).fetchall()
+
+
+@app.post("/api/admin/import_archive")
+def admin_import_archive(request: _SwarmRequest):
+    _swarm_require_admin(request)
+    if not _ARCHIVE_DB.exists():
+        raise _SwarmHTTPException(status_code=404, detail="worldview_archive.db was not found")
+    try:
+        archive = _sqlite3.connect(str(_ARCHIVE_DB), timeout=20)
+        rows = _archive_rows(archive)
+        archive.close()
+        if not rows:
+            return {"imported": 0, "range": {"min": None, "max": None}}
+        with _telemetry_lock:
+            target = _sqlite3.connect(str(_TELEMETRY_DB), timeout=20)
+            # Dedupe pre-existing rows FIRST: the table accumulated duplicate
+            # (entity_id, entity_type, timestamp) groups before the unique
+            # index existed (277,201 groups on 2026-08-15) — CREATE UNIQUE
+            # INDEX fails on them. Keep the earliest rowid per identity.
+            target.execute(
+                "DELETE FROM telemetry WHERE rowid NOT IN "
+                "(SELECT MIN(rowid) FROM telemetry GROUP BY entity_id, entity_type, timestamp)"
+            )
+            target.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_identity "
+                "ON telemetry(entity_id, entity_type, timestamp)"
+            )
+            before = target.total_changes
+            target.executemany(
+                "INSERT OR IGNORE INTO telemetry "
+                "(entity_id, entity_type, lat, lon, alt, heading, speed, timestamp) "
+                "VALUES (?,?,?,?,?,?,?,?)", rows,
+            )
+            imported = target.total_changes - before
+            target.commit()
+            target.close()
+        timestamps = [row[7] for row in rows if row[7]]
+        return {"imported": imported, "range": {
+            "min": min(timestamps) if timestamps else None,
+            "max": max(timestamps) if timestamps else None,
+        }}
+    except _SwarmHTTPException:
+        raise
+    except Exception as exc:
+        raise _SwarmHTTPException(status_code=500, detail=f"Archive import error: {exc}")
+
+
+@app.get("/api/admin/export_archive")
+def admin_export_archive(request: _SwarmRequest, format: str = "json"):
+    _swarm_require_admin(request)
+    if format.lower() != "json":
+        raise _SwarmHTTPException(status_code=400, detail="Only format=json is supported")
+    if not _ARCHIVE_DB.exists():
+        raise _SwarmHTTPException(status_code=404, detail="worldview_archive.db was not found")
+    try:
+        archive = _sqlite3.connect(str(_ARCHIVE_DB), timeout=20)
+        rows = _archive_rows(archive)
+        archive.close()
+        payload = [dict(zip(("entity_id", "entity_type", "lat", "lon", "alt", "heading", "speed", "timestamp"), row)) for row in rows]
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False), media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=worldview_archive.json"},
+        )
+    except _SwarmHTTPException:
+        raise
+    except Exception as exc:
+        raise _SwarmHTTPException(status_code=500, detail=f"Archive export error: {exc}")
+
+
 if __name__ == "__main__":
     import logging
     logging.basicConfig(

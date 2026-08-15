@@ -40,3 +40,9 @@ static/clouds_2048.png
 static/_fair_clouds_raw.jpg
 # Timestamped versioned backups
 *.v_2026*
+
+# v2.3.1 additions
+worldview_archive.db
+worldview_archive.db-*
+recorder.log
+goes_test.jpg
