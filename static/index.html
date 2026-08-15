@@ -1935,7 +1935,6 @@ document.getElementById("btnEarth").addEventListener("click", () => {
     earthViewActive = true;
     button.classList.add("active");
     try { viewer.camera.cancelFlight(); } catch (e) {}
-    wwwHotZoneFirst = false;
     // Cesium pitch is 0 at the horizon and -90 straight down. A slight
     // downward angle keeps the Earth's curve visible without looking at it.
     const evDest = Cesium.Cartesian3.fromDegrees(-95, 38, 150000);
@@ -3954,9 +3953,7 @@ viewer.scene.postUpdate.addEventListener(pulseHotspots);
 // After boot the camera NEVER moves here — the red bot is the only camera
 // mover, and it only flies on a REAL emergency (different war, score >=
 // 1.5x, 5-min cycle). This function just keeps the 🎯 status line fresh.
-let wwwHotZoneId = null;          // zone id currently focused
 let wwwHotZoneTimer = null;
-let wwwHotZoneFirst = true;       // first focus happens on boot
 
 async function focusHotZone(announce) {
   try {
@@ -3969,16 +3966,8 @@ async function focusHotZone(announce) {
       el.textContent = `🎯 ${z.name} — ${d.event_count} live events`;
       el.style.display = "block";
     }
-    // BOOT ONLY: fly to the #1 spot once. After that, no camera movement —
-    // the red bot decides when a big event is worth moving for.
-    if (wwwHotZoneFirst && !earthViewActive) {
-      wwwHotZoneFirst = false;
-      wwwHotZoneId = id;
-      viewer.camera.flyTo({
-        destination: Cesium.Cartesian3.fromDegrees(z.lon, z.lat, 2600000),
-        duration: 4.0,
-      });
-    }
+    // NO camera movement here, ever — the boot auto-zoom flew the camera
+    // into the ground (black screen on Mac). Status line only.
     if (announce) console.log(`[www] hot zone: ${z.name} (${d.event_count} events, score ${d.score})`);
   } catch (e) {
     console.log("[www] hot zone focus failed:", e.message);
