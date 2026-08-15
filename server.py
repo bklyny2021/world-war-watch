@@ -836,11 +836,21 @@ def get_flights(limit: int = 0):
         cat = int(category) if category is not None else 0
         if cat == 0:
             tc = (typecode or "").upper()
-            if tc.startswith("H") or "HELI" in tc or "ROTOR" in tc:
+            mdl = (model or "").upper()
+            # Model names are the most reliable signal; typecode H* is
+            # ambiguous (H60=Black Hawk heli vs H900=Hawker JET) so exclude
+            # Hawker jets when using the H-prefix hint.
+            if ("HELICOPTER" in mdl or "ROTORCRAFT" in mdl
+                    or "EUROCOPTER" in mdl or "AGUSTA" in mdl
+                    or "ROBINSON" in mdl or "SIKORSKY" in mdl
+                    or "HUGHES" in mdl or "ENSTROM" in mdl
+                    or "BELL" in mdl):
                 cat = 7
-            elif tc.startswith("G") or "GLID" in tc:
+            elif (tc.startswith("H") or "HELI" in tc or "ROTOR" in tc) and "HAWKER" not in mdl:
+                cat = 7
+            elif tc.startswith("G") or "GLID" in tc or "GLIDER" in mdl:
                 cat = 8
-            elif tc.startswith("U") or "UAV" in tc or "DRONE" in tc:
+            elif tc.startswith("U") or "UAV" in tc or "DRONE" in tc or "UAV" in mdl:
                 cat = 13
         ac_type = "helicopter" if cat == 7 else ("glider" if cat == 8 else ("uav" if cat == 13 else "plane"))
 
