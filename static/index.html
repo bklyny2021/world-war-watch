@@ -2553,27 +2553,39 @@ function makeWarshipIconDataUrl() {
   canvas.width = 48;
   canvas.height = 48;
   const ctx = canvas.getContext("2d");
-  // North-up silhouette: pointed hull, deck, bridge, and forward turret.
+  // North-up battleship silhouette: pointed bow, bridge, and twin gun turrets.
   ctx.shadowColor = "#ff4444";
   ctx.shadowBlur = 10;
   ctx.fillStyle = "#ff4444";
   ctx.beginPath();
-  ctx.moveTo(24, 3); ctx.lineTo(38, 38); ctx.lineTo(33, 45);
-  ctx.lineTo(15, 45); ctx.lineTo(10, 38); ctx.closePath();
+  ctx.moveTo(24, 3); ctx.lineTo(38, 36); ctx.lineTo(34, 45);
+  ctx.lineTo(14, 45); ctx.lineTo(10, 36); ctx.closePath();
   ctx.fill();
   ctx.shadowBlur = 0;
-  ctx.fillStyle = "#26313b";
+  ctx.fillStyle = "#242b33";
   ctx.beginPath();
-  ctx.moveTo(24, 7); ctx.lineTo(34, 38); ctx.lineTo(30, 42);
-  ctx.lineTo(18, 42); ctx.lineTo(14, 38); ctx.closePath();
+  ctx.moveTo(24, 7); ctx.lineTo(34, 37); ctx.lineTo(30, 42);
+  ctx.lineTo(18, 42); ctx.lineTo(14, 37); ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = "#b8c5cf";
-  ctx.fillRect(19, 22, 10, 9);
-  ctx.fillRect(21, 16, 6, 7);
-  ctx.fillStyle = "#ffc828";
-  ctx.fillRect(22, 10, 4, 7);
-  ctx.fillRect(18, 32, 12, 4);
-  ctx.fillRect(23, 27, 2, 7);
+  // Bridge and superstructure sit aft of the forward batteries.
+  ctx.fillStyle = "#9daab4";
+  ctx.fillRect(19, 27, 10, 8);
+  ctx.fillStyle = "#c5d0d8";
+  ctx.fillRect(21, 23, 6, 5);
+  ctx.fillRect(22, 20, 4, 3);
+  // Two glowing red forward turrets, each with a twin-barrel profile.
+  ctx.shadowColor = "#ff4444";
+  ctx.shadowBlur = 7;
+  ctx.fillStyle = "#ff4444";
+  ctx.fillRect(18, 15, 12, 4);
+  ctx.fillRect(18, 10, 3, 7);
+  ctx.fillRect(27, 10, 3, 7);
+  ctx.fillRect(19, 8, 2, 4);
+  ctx.fillRect(27, 8, 2, 4);
+  ctx.fillRect(19, 5, 2, 4);
+  ctx.fillRect(27, 5, 2, 4);
+  ctx.fillRect(19, 34, 10, 4);
+  ctx.shadowBlur = 0;
   return canvas.toDataURL();
 }
 const warshipIconDataUrl = makeWarshipIconDataUrl();

@@ -1505,11 +1505,11 @@ def _is_military_ship(name, ship_type, flag=""):
         return True
     if _re.match(r"^(?:" + "|".join(_re.escape(prefix) for prefix in _NAVAL_NAME_PREFIXES) + r")\b", vessel_name):
         return True
-    if any(term in vessel_name for term in ("NAVY", "MILITARY", "WARSHIP", "MARINE", "COAST GUARD")):
+    if any(term in vessel_name for term in ("NAVY", "MILITARY", "WARSHIP", "COAST GUARD")):
         return True
-    if "PATROL" in vessel_name and (
-        _re.match(r"^(?:" + "|".join(_re.escape(prefix) for prefix in _NAVAL_NAME_PREFIXES) + r")\b", vessel_name)
-        or vessel_flag in _NAVAL_PATROL_FLAGS
+    if "PATROL" in vessel_name and _re.match(
+        r"^(?:" + "|".join(_re.escape(prefix) for prefix in _NAVAL_NAME_PREFIXES) + r")\b",
+        vessel_name,
     ):
         return True
     return False
