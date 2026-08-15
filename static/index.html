@@ -3308,7 +3308,8 @@ viewer.camera.changed.addEventListener(() => {
   loadHurricanes();
   loadConflictZones();
   loadHotspots();
-  focusHotZone(true);   // fly to the hottest war spot on load
+  focusHotZone(false);  // status line only — NO auto-zoom on load (camera
+                        // was flying into the ground / black screen on Mac)
   initAddressSearch();
   await poll();
   pollTimer = setInterval(poll, POLL_MS);
