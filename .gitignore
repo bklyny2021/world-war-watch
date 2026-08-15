@@ -33,3 +33,10 @@ _ships_check.json
 _cams_check.json
 _fix_verify*.js
 _fix_verify*.png
+# Redundant cloud texture intermediates (keep only clouds.png)
+static/clouds_8k.png
+static/clouds_4096.png
+static/clouds_2048.png
+static/_fair_clouds_raw.jpg
+# Timestamped versioned backups
+*.v_2026*
