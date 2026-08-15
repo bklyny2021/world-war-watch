@@ -1,2 +1,0 @@
-﻿=== KILL 2026-08-14 21:40:21 ===
-listeners after kill: 14892 3856
