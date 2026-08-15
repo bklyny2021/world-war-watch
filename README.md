@@ -7,7 +7,7 @@ A CesiumJS 3D globe + Python server. Everything on screen is REAL data from live
 
 Current version: **v2.3.1 (BETA)** · Previous: v2.3 (snapshot in `backup\WorldWarWatch_v2_3\`)
 
-**Platforms:** Windows ✅ (installer + portable EXE) · **macOS — coming soon** (separate Mac build, its own version)
+**Platforms:** Windows ✅ (installer + portable EXE) · **macOS ✅** (v2.3.1-mac release — Intel x86_64, unsigned beta, bring your own Ion token)
 
 ---
 
