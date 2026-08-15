@@ -523,7 +523,6 @@
     <span title="Frames per second"><span id="hudFps" style="color:#00ff9d;font-weight:700;">--</span> FPS</span>
     <span title="Aircraft"><span id="hudPlanes" style="color:#38bdf8;font-weight:700;">0</span> A/C</span>
     <span title="Ships"><span id="hudShips" style="color:#00ff9d;font-weight:700;">0</span> SHIPS</span>
-    <span title="Naval vessels"><span id="hudNaval" style="color:#ff4444;font-weight:700;">0</span> NAVAL</span>
     <span title="Fires"><span id="hudFires" style="color:#ff4422;font-weight:700;">0</span> FIRES</span>
     <span title="Satellites"><span id="hudSats" style="color:#c084fc;font-weight:700;">0</span> SATS</span>
   </div>
@@ -558,10 +557,6 @@
   <label class="layer-toggle">
     <span class="lt-label"><span class="lt-dot" style="background:#38bdf8"></span>Live Maritime (AIS)</span>
     <input type="checkbox" id="toggleShips" checked /><span class="lt-switch"></span>
-  </label>
-  <label class="layer-toggle">
-    <span class="lt-label"><span class="lt-dot" style="background:#ff4444"></span>Naval Forces</span>
-    <input type="checkbox" id="toggleNaval" checked /><span class="lt-switch"></span>
   </label>
   <label class="layer-toggle">
     <span class="lt-label"><span class="lt-dot" style="background:#ff4422"></span>Live Fires (NASA FIRMS)</span>
@@ -1120,7 +1115,6 @@ const layerState = {
   jamming: false,
   restricted: false,
   ships: true,
-  naval: true,
   fires: true,
   hurricanes: true,
   buildings: true,
@@ -1326,12 +1320,6 @@ function updateCount() {
 function updateHudCounts() {
   const hudShips = document.getElementById("hudShips");
   if (hudShips) hudShips.textContent = shipEntities.size;
-  const hudNaval = document.getElementById("hudNaval");
-  if (hudNaval) {
-    let navalCount = 0;
-    for (const ent of shipEntities.values()) if (ent._worldviewShipData && ent._worldviewShipData.military) navalCount++;
-    hudNaval.textContent = navalCount;
-  }
   const hudFires = document.getElementById("hudFires");
   if (hudFires) hudFires.textContent = fireEntities.size;
   const hudSats = document.getElementById("hudSats");
@@ -2414,8 +2402,7 @@ function updateShipOcclusion() {
   for (const ent of shipEntities.values()) {
     const pos = ent._shipPosProp.getValue(t);
     if (!pos) { ent.show = false; continue; }
-    const ship = ent._worldviewShipData || {};
-    ent.show = layerState.ships && (!ship.military || layerState.naval) && _shipOccluder.isPointVisible(pos);
+    ent.show = layerState.ships && _shipOccluder.isPointVisible(pos);
   }
 }
 viewer.scene.postUpdate.addEventListener(updateShipOcclusion);
@@ -2548,55 +2535,12 @@ function makeShipIconDataUrl() {
 }
 const greenShipIconDataUrl = makeShipIconDataUrl();
 
-function makeWarshipIconDataUrl() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 48;
-  canvas.height = 48;
-  const ctx = canvas.getContext("2d");
-  // North-up battleship silhouette: pointed bow, bridge, and twin gun turrets.
-  ctx.shadowColor = "#ff4444";
-  ctx.shadowBlur = 10;
-  ctx.fillStyle = "#ff4444";
-  ctx.beginPath();
-  ctx.moveTo(24, 3); ctx.lineTo(38, 36); ctx.lineTo(34, 45);
-  ctx.lineTo(14, 45); ctx.lineTo(10, 36); ctx.closePath();
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "#242b33";
-  ctx.beginPath();
-  ctx.moveTo(24, 7); ctx.lineTo(34, 37); ctx.lineTo(30, 42);
-  ctx.lineTo(18, 42); ctx.lineTo(14, 37); ctx.closePath();
-  ctx.fill();
-  // Bridge and superstructure sit aft of the forward batteries.
-  ctx.fillStyle = "#9daab4";
-  ctx.fillRect(19, 27, 10, 8);
-  ctx.fillStyle = "#c5d0d8";
-  ctx.fillRect(21, 23, 6, 5);
-  ctx.fillRect(22, 20, 4, 3);
-  // Two glowing red forward turrets, each with a twin-barrel profile.
-  ctx.shadowColor = "#ff4444";
-  ctx.shadowBlur = 7;
-  ctx.fillStyle = "#ff4444";
-  ctx.fillRect(18, 15, 12, 4);
-  ctx.fillRect(18, 10, 3, 7);
-  ctx.fillRect(27, 10, 3, 7);
-  ctx.fillRect(19, 8, 2, 4);
-  ctx.fillRect(27, 8, 2, 4);
-  ctx.fillRect(19, 5, 2, 4);
-  ctx.fillRect(27, 5, 2, 4);
-  ctx.fillRect(19, 34, 10, 4);
-  ctx.shadowBlur = 0;
-  return canvas.toDataURL();
-}
-const warshipIconDataUrl = makeWarshipIconDataUrl();
-
-function getShipIcon(type, military) {
+function getShipIcon(type) {
   // inline data-URI icon — guaranteed to render, no network fetch
-  return military ? warshipIconDataUrl : greenShipIconDataUrl;
+  return greenShipIconDataUrl;
 }
 
-function shipColor(type, military) {
-  if (military) return Cesium.Color.fromCssColorString("#ff4444");
+function shipColor(type) {
   if (type === "Cargo") return Cesium.Color.fromCssColorString("#38bdf8");
   if (type === "Tanker") return Cesium.Color.fromCssColorString("#ff5a3c");
   if (type === "Military") return Cesium.Color.fromCssColorString("#ffc828");
@@ -2627,7 +2571,7 @@ async function loadShips() {
             // occludes it (no see-through) AND pick() can hit it (no z-fight)
             position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat, 10),
             billboard: {
-              image: getShipIcon(s.type, s.military),
+              image: getShipIcon(s.type),
               rotation: Cesium.Math.toRadians(-s.cog),
               alignedAxis: Cesium.Cartesian3.ZERO,
               // GEMINI GOLDEN GOOSE spec: scale 0.6, NearFarScalar(1.0e3, 0.6, 2.5e6, 0.04)
@@ -2649,7 +2593,7 @@ async function loadShips() {
             label: {
               text: s.name.slice(0, 16),
               font: "11px Cascadia Code, Consolas, monospace",
-              fillColor: shipColor(s.type, s.military),
+              fillColor: Cesium.Color.fromCssColorString("#7dd3fc"),
               outlineColor: Cesium.Color.fromCssColorString("#000000"),
               outlineWidth: 3,
               style: Cesium.LabelStyle.FILL_AND_OUTLINE,
@@ -2690,9 +2634,6 @@ async function loadShips() {
           Cesium.Cartesian3.fromDegrees(projLon, projLat, 10)
         );
         ent.billboard.rotation = Cesium.Math.toRadians(-s.cog);
-        ent.billboard.image = getShipIcon(s.type, s.military);
-        ent.label.fillColor = shipColor(s.type, s.military);
-        ent.label.text = s.name.slice(0, 16);
         ent._worldviewShipData = s;
         // tail: keep last ~20 points (where the ship came from) — always shown
         // like plane tails, glowing cyan, with depth-fail so it stays visible
@@ -2719,7 +2660,7 @@ async function loadShips() {
             };
           }
         }
-        ent.show = layerState.ships && (!s.military || layerState.naval);
+        ent.show = layerState.ships;
       }
       if (idx < ships.length) {
         setTimeout(processChunk, 0);   // yield to the renderer between chunks
@@ -2750,20 +2691,7 @@ function wireShipToggle() {
   el.addEventListener("change", () => {
     layerState.ships = el.checked;
     _shipOccluderDirty = true;   // re-occlude on toggle (show/hide far side)
-    for (const ent of shipEntities.values()) {
-      const ship = ent._worldviewShipData || {};
-      ent.show = el.checked && (!ship.military || layerState.naval);
-    }
-  });
-  const naval = document.getElementById("toggleNaval");
-  if (!naval) return;
-  naval.addEventListener("change", () => {
-    layerState.naval = naval.checked;
-    _shipOccluderDirty = true;
-    for (const ent of shipEntities.values()) {
-      const ship = ent._worldviewShipData || {};
-      ent.show = layerState.ships && (!ship.military || naval.checked);
-    }
+    for (const ent of shipEntities.values()) ent.show = el.checked;
   });
 }
 
@@ -2789,17 +2717,8 @@ function showShipCard(ship) {
     document.body.appendChild(card);
     card.querySelector("#shipClose").addEventListener("click", () => { card.style.display = "none"; selectedShip = null; });
   }
-  const nameEl = document.getElementById("shipName");
-  nameEl.textContent = ship.name;
-  if (ship.military) {
-    const badge = document.createElement("span");
-    badge.textContent = "⚔ WARSHIP";
-    badge.style.cssText = "margin-left:8px;padding:2px 5px;border:1px solid #ff4444;border-radius:3px;color:#ff7777;font-size:9px;letter-spacing:1px;vertical-align:middle;";
-    nameEl.appendChild(badge);
-  }
-  const metaEl = document.getElementById("shipMeta");
-  metaEl.textContent = "MMSI " + ship.mmsi + " · " + ship.type + (ship.flag ? " · FLAG " + ship.flag : "");
-  metaEl.style.color = ship.military ? "#ff6666" : "#7c8ba0";
+  document.getElementById("shipName").textContent = ship.name;
+  document.getElementById("shipMeta").textContent = "MMSI " + ship.mmsi + " · " + ship.type + (ship.flag ? " · " + ship.flag : "");
   const rows = [
     ["Speed", ship.sog.toFixed(1) + " kn"],
     ["Course", ship.cog.toFixed(0) + "°"],
@@ -2838,11 +2757,9 @@ function wireShipClicks() {
       cog: s.cog || 0,
       heading: s.heading || 0,
       destination: s.destination || "",
-      eta: s.eta || "",
       flag: s.flag || "",
       length: s.length || 0,
       width: s.width || 0,
-      military: !!s.military,
     });
   };
   window.closeShipCard = function () {
@@ -3025,10 +2942,7 @@ function setPlaybackMode(on) {
     document.getElementById("liveBadge").innerHTML = '<span class="dot"></span>LIVE&nbsp;ADS-B';
     // restore live: show everything again
     for (const [icao, ent] of entities) ent.show = layerState.flights && (flights.get(icao) ? (flights.get(icao).military ? layerState.military : true) : true);
-    for (const [mmsi, ent] of shipEntities) {
-      const ship = ent._worldviewShipData || {};
-      ent.show = layerState.ships && (!ship.military || layerState.naval);
-    }
+    for (const [mmsi, ent] of shipEntities) ent.show = layerState.ships;
     for (const [key, ent] of fireEntities) ent.show = layerState.fires;
   }
 }

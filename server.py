@@ -1483,37 +1483,6 @@ _SHIP_TYPE_MAP = {
     "95": "Other", "96": "Other", "97": "Other", "98": "Other", "99": "Other",
 }
 
-_NAVAL_NAME_PREFIXES = (
-    "USS", "USNS", "USCGC", "USCG", "HMS", "HMAS", "HMNZS", "HMCS", "INS",
-    "JS", "JDS", "ROKS", "HDMS", "HSWMS", "KRI", "KDB", "RFA", "RSS", "TCG",
-    "ARC", "ARM", "BNS", "PNS", "ORP", "ESPS", "FNS", "LÉ", "NNS", "SPS",
-    "TNS", "UBS", "VNS", "CCGS", "FGS", "ITS", "HTMS", "RBNS", "RSN", "SAS",
-    "SLAF", "SLNS", "TCD", "TSV", "PLAN", "WARSHIP", "NAVY", "MILITARY", "USMC",
-)
-_NAVAL_PATROL_FLAGS = {
-    "US", "GB", "FR", "CA", "AU", "NZ", "DK", "DE", "ES", "IT", "NL", "NO",
-    "SE", "FI", "JP", "KR", "IN", "TR", "GR", "BR", "RU", "CN", "ID", "TH",
-}
-
-
-def _is_military_ship(name, ship_type, flag=""):
-    """Classify naval, coast-guard, and military AIS assets for the UI."""
-    vessel_name = (name or "").strip().upper()
-    vessel_type = (ship_type or "").strip()
-    vessel_flag = (flag or "").strip().upper()
-    if vessel_type == "Military":
-        return True
-    if _re.match(r"^(?:" + "|".join(_re.escape(prefix) for prefix in _NAVAL_NAME_PREFIXES) + r")\b", vessel_name):
-        return True
-    if any(term in vessel_name for term in ("NAVY", "MILITARY", "WARSHIP", "COAST GUARD")):
-        return True
-    if "PATROL" in vessel_name and _re.match(
-        r"^(?:" + "|".join(_re.escape(prefix) for prefix in _NAVAL_NAME_PREFIXES) + r")\b",
-        vessel_name,
-    ):
-        return True
-    return False
-
 
 _FALLBACK_SHIPS = [
     {"mmsi": "FALLBACK-1", "name": "NYC Ferry", "type": "Passenger", "lat": 40.70, "lon": -74.01, "sog": 12.0, "cog": 90, "heading": 90, "destination": "Wall St", "flag": "US", "length": 40, "width": 10},
@@ -1532,9 +1501,6 @@ _FALLBACK_SHIPS = [
     {"mmsi": "FALLBACK-14", "name": "Cape Cod Trawler", "type": "Fishing", "lat": 41.80, "lon": -69.90, "sog": 5.0, "cog": 30, "heading": 30, "destination": "Boston", "flag": "US", "length": 30, "width": 8},
     {"mmsi": "FALLBACK-15", "name": "Baltic RoRo", "type": "Cargo", "lat": 54.60, "lon": 18.50, "sog": 11.0, "cog": 90, "heading": 90, "destination": "Gdansk", "flag": "PL", "length": 190, "width": 26},
 ]
-for _fallback_ship in _FALLBACK_SHIPS:
-    _fallback_ship["military"] = False
-    _fallback_ship["source"] = "fallback"
 
 
 def _fetch_ships():
@@ -1579,24 +1545,19 @@ def _fetch_ships():
                         lon = float(row.get("LON"))
                         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                             continue
-                        name = row.get("SHIPNAME") or "Unknown"
-                        ship_type = _SHIP_TYPE_MAP.get(str(row.get("SHIPTYPE")), "Other")
-                        flag = row.get("FLAG") or ""
                         ships.append({
                             "mmsi": str(row.get("SHIP_ID", "")),
-                            "name": name,
-                            "type": ship_type,
-                            "military": _is_military_ship(name, ship_type, flag),
+                            "name": row.get("SHIPNAME") or "Unknown",
+                            "type": _SHIP_TYPE_MAP.get(str(row.get("SHIPTYPE")), "Other"),
                             "lat": lat,
                             "lon": lon,
                             "sog": float(row.get("SPEED") or 0),
                             "cog": float(row.get("COURSE") or 0),
                             "heading": float(row.get("HEADING") or 0),
                             "destination": row.get("DESTINATION") or "",
-                            "flag": flag,
+                            "flag": row.get("FLAG") or "",
                             "length": float(row.get("LENGTH") or 0),
                             "width": float(row.get("WIDTH") or 0),
-                            "source": "background-crawl",
                         })
                     except (TypeError, ValueError):
                         continue
@@ -1683,7 +1644,6 @@ def _aisstream_listener():
                             "mmsi": mmsi,
                             "name": cur.get("name", "Unknown"),
                             "type": cur.get("type", "Other"),
-                            "military": cur.get("military", False),
                             "lat": float(lat),
                             "lon": float(lon),
                             "sog": float(pr.get("SpeedOverGround", 0) or 0),
@@ -1701,15 +1661,10 @@ def _aisstream_listener():
                     with _ship_cache_lock:
                         cur = ship_cache.get(mmsi, {})
                         dim = ssd.get("Dimension", {})
-                        name = ssd.get("ShipName", cur.get("name", "Unknown"))
-                        ship_type = _SHIP_TYPE_MAP.get(str(ssd.get("Type", "")), cur.get("type", "Other"))
-                        flag = ssd.get("Flag", cur.get("flag", ""))
                         cur.update({
                             "mmsi": mmsi,
-                            "name": name,
-                            "type": ship_type,
-                            "military": _is_military_ship(name, ship_type, flag),
-                            "flag": flag,
+                            "name": ssd.get("ShipName", cur.get("name", "Unknown")),
+                            "type": _SHIP_TYPE_MAP.get(str(ssd.get("Type", "")), cur.get("type", "Other")),
                             "destination": ssd.get("Destination", cur.get("destination", "")),
                             "eta": ssd.get("Eta", ssd.get("ETA", cur.get("eta", ""))),
                             "length": float(dim.get("Length", cur.get("length", 0)) or 0),
