@@ -46,3 +46,24 @@ worldview_archive.db
 worldview_archive.db-*
 recorder.log
 goes_test.jpg
+
+# Internal dev files — NOT for the public repo (untracked 2026-08-15)
+AGENT_BOARD.md
+CODEX_BRIEF*.md
+RESUME_NEXT_SESSION.md
+*.ps1
+fix_log.txt
+kill_log.txt
+restart_log.txt
+_exe_debug_out.txt
+_v231_*.png
+worldview.pid
+yt_channels.json
+audit_feeds.py
+check_live.py
+check_procs.py
+check_state.py
+resolve_channels.py
+verify_*channels*.py
+static/make_*.py
+static/rollback.py
