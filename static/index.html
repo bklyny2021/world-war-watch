@@ -988,10 +988,13 @@ viewer.clock.shouldAnimate = true;
 
 // keep the camera from sinking under the globe when dragging/zooming —
 // 1000m floor: photoreal tiles include real building/terrain meshes, so
-// 250m put the camera INSIDE skyscrapers/mountains (the "zoomed into the
+// 25m put the camera INSIDE skyscrapers/mountains (the "zoomed into the
 // earth" bug). 1km clears the tallest structures and still reads street-level.
+// Collision detection DISABLED: its raycasts against the streaming photoreal
+// tileset crash the render loop (RangeError, "Rendering has stopped", page
+// unresponsive, wheel dead). The watchdog below is the safety net instead.
 viewer.scene.screenSpaceCameraController.minimumZoomDistance = 1000.0;
-viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
+viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
 viewer.scene.globe.depthTestAgainstTerrain = true;
 
 // CAMERA FLOOR WATCHDOG — if the camera ever ends up underground (inside
@@ -1031,20 +1034,21 @@ viewer.camera.flyTo({
 });
 
 /* ============================================================
-   Decluttering — clustering was hiding planes inside blue circles;
-   disabled so every aircraft shows as its own icon (drillPick +
-   scaleByDistance handle overlap). Kept the badge code for reference.
+   Decluttering — cluster nearby entities into dark count badges.
    ============================================================ */
 const clustering = viewer.dataSourceDisplay.defaultDataSource.clustering;
+// Clustering DISABLED (2026-08-14): dark count badges read as "black circles"
+// when planes bunch up. Boo flagged them; decluttering via scaleByDistance
+// + distance culling instead. Code kept for re-enable.
 clustering.enabled = false;
 const clusterBadge = (() => {
   const c = document.createElement("canvas");
   c.width = c.height = 64;
   const g = c.getContext("2d");
-  // BRIGHT cyan badge with dark text — must never read as a black circle
+  // Dark badge with a high-contrast light outline and count label.
   g.beginPath();
   g.arc(32, 32, 28, 0, 2 * Math.PI);
-  g.fillStyle = "rgba(56, 189, 248, 0.92)";
+  g.fillStyle = "rgba(10, 14, 20, 0.94)";
   g.fill();
   g.lineWidth = 3;
   g.strokeStyle = "rgba(255, 255, 255, 0.9)";
@@ -1058,7 +1062,7 @@ clustering.clusterEvent.addEventListener((ids, cluster) => {
   cluster.billboard.verticalOrigin = Cesium.VerticalOrigin.CENTER;
   // no depth-test bypass — clusters occlude with the globe too
   cluster.label.font = "bold 13px Cascadia Code, Consolas, monospace";
-  cluster.label.fillColor = Cesium.Color.fromCssColorString("#0a0e14");
+  cluster.label.fillColor = Cesium.Color.WHITE;
   cluster.label.outlineColor = Cesium.Color.fromCssColorString("#ffffff");
   cluster.label.outlineWidth = 2;
   cluster.label.style = Cesium.LabelStyle.FILL_AND_OUTLINE;
@@ -1198,14 +1202,15 @@ function sampleFlight(f, t) {
 function makeBillboard(f) {
   const isSel = f.icao === selectedIcao;
   const isMil = !!f.military;
+  const typeIcon = getAircraftIcon(f);   // heli/glider/uav data-URI, or null for planes
   const ent = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(f.lon, f.lat, Math.max(f.alt_m, 500)),
     billboard: {
-      image: isSel ? "/static/plane_sel.png" : (isMil ? "/static/plane_mil.png" : "/static/plane.png"),
+      image: typeIcon || (isSel ? "/static/plane_sel.png" : (isMil ? "/static/plane_mil.png" : "/static/plane.png")),
       rotation: Cesium.Math.toRadians(-f.heading),   // icon points North; negate for Cesium's CCW-positive rotation
       alignedAxis: Cesium.Cartesian3.ZERO,            // screen-aligned (FR24 style)
       scale: isSel ? 0.9 : 0.7,
-      scaleByDistance: new Cesium.NearFarScalar(1.0e3, 0.9, 3.0e6, 0.1),
+      scaleByDistance: new Cesium.NearFarScalar(1.5e2, 0.8, 8.0e6, 0.15),
       eyeOffset: new Cesium.Cartesian3(0, 0, 50),
       // NO disableDepthTestDistance — planes behind the horizon must be
       // occluded by the Earth (no x-ray through the globe)
@@ -1344,7 +1349,7 @@ function renderSidebar(f) {
     </div>
     <div class="row"><span class="label">Airline</span><span class="value">${esc(f.airline || "—")}</span></div>
     <div class="row"><span class="label">Flight</span><span class="value hl">${esc(f.callsign)}${f.flight ? " · " + esc(f.flight) : ""}</span></div>
-    <div class="row"><span class="label">Aircraft</span><span class="value">${esc(f.model || "—")}${f.typecode ? `<span class="sub">${esc(f.typecode)}</span>` : ""}</span></div>
+    <div class="row"><span class="label">Aircraft</span><span class="value">${esc(f.model || "—")}${f.typecode ? `<span class="sub">${esc(f.typecode)}</span>` : ""}${f.ac_type && f.ac_type !== "plane" ? `<span class="sub">${esc(f.ac_type.toUpperCase())}</span>` : ""}</span></div>
     <div class="row"><span class="label">Registration</span><span class="value">${esc(f.registration || "—")}</span></div>
     <div class="row"><span class="label">Altitude</span><span class="value">${formatAlt(f.alt_ft)}<span class="sub">${(f.alt_m ?? 0).toLocaleString()} m</span></span></div>
     <div class="row"><span class="label">Groundspeed</span><span class="value">${formatSpeed(f.speed_kt)}</span></div>
@@ -2401,6 +2406,99 @@ function updateShipOcclusion() {
   }
 }
 viewer.scene.postUpdate.addEventListener(updateShipOcclusion);
+
+// ============ Inline canvas aircraft icons (no 404s, always renders) ============
+// Helicopter icon — rotor disc + tail boom, neon cyan, points North.
+function makeHeliIconDataUrl() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 48;
+  canvas.height = 48;
+  const ctx = canvas.getContext("2d");
+  ctx.translate(24, 24);
+  // rotor disc (ellipse) — the signature helicopter silhouette
+  ctx.fillStyle = "#22d3ee";
+  ctx.shadowColor = "#22d3ee";
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.ellipse(0, -8, 16, 5, 0, 0, 2 * Math.PI);
+  ctx.fill();
+  // tail boom + tail rotor
+  ctx.fillStyle = "#22d3ee";
+  ctx.beginPath();
+  ctx.ellipse(0, 8, 4, 10, 0, 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(0, 18, 6, 2.5, 0, 0, 2 * Math.PI);
+  ctx.fill();
+  // bright core
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#c8f7ff";
+  ctx.beginPath();
+  ctx.ellipse(0, -8, 8, 2.5, 0, 0, 2 * Math.PI);
+  ctx.fill();
+  return canvas.toDataURL();
+}
+const heliIconDataUrl = makeHeliIconDataUrl();
+
+// Glider icon — swept delta wing, amber, points North.
+function makeGliderIconDataUrl() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 48;
+  canvas.height = 48;
+  const ctx = canvas.getContext("2d");
+  ctx.translate(24, 24);
+  ctx.fillStyle = "#fbbf24";
+  ctx.shadowColor = "#fbbf24";
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(0, -16);
+  ctx.lineTo(14, 10);
+  ctx.lineTo(0, 4);
+  ctx.lineTo(-14, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#fde68a";
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(8, 8);
+  ctx.lineTo(0, 3);
+  ctx.lineTo(-8, 8);
+  ctx.closePath();
+  ctx.fill();
+  return canvas.toDataURL();
+}
+const gliderIconDataUrl = makeGliderIconDataUrl();
+
+// UAV/drone icon — quad-rotor X, magenta, points North.
+function makeUavIconDataUrl() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 48;
+  canvas.height = 48;
+  const ctx = canvas.getContext("2d");
+  ctx.translate(24, 24);
+  ctx.strokeStyle = "#e879f9";
+  ctx.shadowColor = "#e879f9";
+  ctx.shadowBlur = 8;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-10, -10); ctx.lineTo(10, 10);
+  ctx.moveTo(10, -10); ctx.lineTo(-10, 10);
+  ctx.stroke();
+  ctx.fillStyle = "#e879f9";
+  ctx.beginPath();
+  ctx.arc(0, 0, 4, 0, 2 * Math.PI);
+  ctx.fill();
+  return canvas.toDataURL();
+}
+const uavIconDataUrl = makeUavIconDataUrl();
+
+function getAircraftIcon(f) {
+  if (f.ac_type === "helicopter") return heliIconDataUrl;
+  if (f.ac_type === "glider") return gliderIconDataUrl;
+  if (f.ac_type === "uav") return uavIconDataUrl;
+  return null; // plane: use the PNG (selected/military/civil)
+}
 
 // ============ Inline canvas ship icon (no 404s, always renders) ============
 // Data-URI canvas icon — no PNG fetch, no missing-file risk. Neon green

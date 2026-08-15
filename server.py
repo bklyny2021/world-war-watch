@@ -806,7 +806,7 @@ def get_flights(limit: int = 0):
         (icao24, callsign, origin_country, time_position, last_contact,
          longitude, latitude, baro_altitude, on_ground, velocity,
          true_track, vertical_rate, sensors, geo_altitude, squawk,
-         spi, position_source) = (list(s) + [None] * 17)[:17]
+         spi, position_source, category) = (list(s) + [None] * 18)[:18]
 
         if longitude is None or latitude is None:
             continue
@@ -828,6 +828,22 @@ def get_flights(limit: int = 0):
         typecode = (row.get("typecode") or "").strip() or None
         operator = (row.get("operator") or "").strip() or airline
 
+        # OpenSky category (index 17): 0=No info, 1=No ADS-B, 2=Small,
+        # 3=Large, 4=High-vortex, 5=Heavy, 6=High-performance, 7=Rotorcraft,
+        # 8=Glider, 9=Lighter-than-air, 10=Parachutist, 11=Ultralight,
+        # 12=Reserved, 13=UAV, 14=Space, 15=EMERGENCY, 16=Service Level 1.
+        # Fall back to typecode/model hints when category is missing.
+        cat = int(category) if category is not None else 0
+        if cat == 0:
+            tc = (typecode or "").upper()
+            if tc.startswith("H") or "HELI" in tc or "ROTOR" in tc:
+                cat = 7
+            elif tc.startswith("G") or "GLID" in tc:
+                cat = 8
+            elif tc.startswith("U") or "UAV" in tc or "DRONE" in tc:
+                cat = 13
+        ac_type = "helicopter" if cat == 7 else ("glider" if cat == 8 else ("uav" if cat == 13 else "plane"))
+
         flights.append({
             "icao": icao,
             "callsign": cs,
@@ -848,6 +864,7 @@ def get_flights(limit: int = 0):
             "destination": None,
             "military": _is_military(cs, operator),
             "priority": _plane_priority(cs, operator, airline),
+            "ac_type": ac_type,
         })
 
     _LAST_FLIGHTS.clear()
