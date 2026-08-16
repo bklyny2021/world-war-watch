@@ -806,16 +806,47 @@ viewer.scene.globe.maximumScreenSpaceError = 2;   // HIGH-REZ: 2 = Cesium defaul
   });
 })();
 
-// ============ Camera-height resolution controller ============
+// ============ Camera-height + FPS resolution controller ============
 // Global views do not need the extra 4K pixels; zooming in restores them.
+// FPS-aware: if the frame rate sags (weak iGPU — Mac Intel UHD 630), drop
+// the resolution scale so the globe stays smooth instead of going black.
 (function () {
   const GLOBAL_VIEW_HEIGHT = 1000000;
+  const LOW_FPS = 20;        // below this, drop resolution
+  const GOOD_FPS = 30;       // above this (sustained), restore resolution
+  let lowFpsStreak = 0;
+  let goodFpsStreak = 0;
+  let lastFps = 60;
+  let frames = 0;
+  let last = performance.now();
   function updateResolutionScale() {
-    const wanted = viewer.camera.positionCartographic.height > GLOBAL_VIEW_HEIGHT ? 0.5 : 1.0;
+    const h = viewer.camera.positionCartographic.height;
+    const base = h > GLOBAL_VIEW_HEIGHT ? 0.5 : 1.0;
+    let wanted = base;
+    if (lastFps < LOW_FPS) {
+      lowFpsStreak++;
+      goodFpsStreak = 0;
+      if (lowFpsStreak >= 3) wanted = Math.min(base, 0.5);
+    } else if (lastFps > GOOD_FPS) {
+      goodFpsStreak++;
+      lowFpsStreak = 0;
+      if (goodFpsStreak >= 10) wanted = base;
+    }
     if (viewer.resolutionScale !== wanted) viewer.resolutionScale = wanted;
   }
+  function tick() {
+    frames++;
+    const now = performance.now();
+    if (now - last >= 1000) {
+      lastFps = Math.round((frames * 1000) / (now - last));
+      frames = 0;
+      last = now;
+      updateResolutionScale();
+    }
+    requestAnimationFrame(tick);
+  }
   viewer.scene.postUpdate.addEventListener(updateResolutionScale);
-  updateResolutionScale();
+  requestAnimationFrame(tick);
 })();
 // NO custom terrain — the ArcGIS Terrain3D swap was breaking the surface
 // (gray wash at street level). Flat ellipsoid = the config that worked at
